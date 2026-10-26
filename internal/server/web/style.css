@@ -615,3 +615,35 @@ dialog pre {
     transition: background 0.15s;
   }
 }
+
+.node-context-menu {
+  position: fixed;
+  z-index: 100;
+  width: 180px;
+  max-width: calc(100vw - 8px);
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 6px 24px #1a362b25;
+}
+.node-context-label {
+  padding: 5px 8px 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 4px;
+}
+.node-context-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+}
+.node-context-menu button:focus-visible {
+  outline-offset: -2px;
+  background: var(--mint);
+}

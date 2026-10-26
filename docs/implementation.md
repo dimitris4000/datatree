@@ -21,3 +21,9 @@ Independent review found block/plain YAML scalar spans consuming compact-mapping
 Conversion and non-YAML inspector representations serialize a cloned node graph with presentation styles cleared. Scalar tags and values remain intact, preserving ambiguous strings, numeric precision and key order. The YAML encoder uses two-space indentation and retains explicit numeric tags when required for very large integers. Ordinary YAML edits keep their existing style-preserving serialization path.
 
 Regression coverage includes nested objects and arrays, empty collections, multiline and ambiguous strings, large numbers, immutable preview/inspection, preview-to-confirmation equality, downloads and undo.
+
+## Node context menu
+
+Right-click uses the canvas hit test and viewport transform to target card headers or object scalar fields. An HTML menu shares the existing edit endpoint and draft/busy guards. Object duplicates and renames prompt for a key; array items duplicate directly; deletion confirms. Root actions, array renaming and CSV cell shape changes are disabled. Existing inspector controls remain available.
+
+The menu supports arrow keys, Home/End, Escape and Shift+F10 from the node list. It stays within the viewport and closes on outside pointer input, pan/zoom, scrolling, resize, focus loss or document changes. JavaScript regression tests cover hit targeting, action eligibility, cancellation, request payloads, positioning, focus and keyboard dismissal.

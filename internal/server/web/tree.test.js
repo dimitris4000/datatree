@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { layout, hitTest, worldPoint } from "./tree.js";
+import { TreeCanvas, layout, hitTest, worldPoint } from "./tree.js";
 const scalar = (id, label, value) => ({
   id,
   label,
@@ -81,4 +81,32 @@ test("collapsed and paginated collections remain bounded", () => {
     id: "1",
     offset: 20,
   });
+});
+
+test("right click resolves the transformed node without selecting, toggling, or paging", () => {
+  const root = obj("1", "$", [scalar("2", "name", "Alice")]);
+  const graph = layout(root, new Map([["1", root]]), new Set(["1"]));
+  const listeners = new Map();
+  const calls = [];
+  const canvas = { setAttribute() {}, addEventListener: (type, fn) => listeners.set(type, fn),
+    getBoundingClientRect: () => ({ left: 100, top: 50 }) };
+  const tree = Object.create(TreeCanvas.prototype);
+  Object.assign(tree, { canvas, graph, view: { x: 30, y: 20, scale: 2 }, resize() {},
+    callbacks: { action: () => assert.fail("right click triggered left-click action"), context: (...args) => calls.push(args) } });
+  tree.bind();
+  const c = graph.cards[0];
+  const event = (x, y) => ({ clientX: 100 + 30 + x * 2, clientY: 50 + 20 + y * 2,
+    preventDefault() { this.prevented = true; } });
+  const row = event(c.x + 70, c.y + 50);
+  assert.ok(listeners.has("contextmenu"), "no right-click handler");
+  listeners.get("contextmenu")(row);
+  assert.deepEqual(calls[0], ["2", row.clientX, row.clientY]);
+  assert.equal(row.prevented, true);
+  const toggle = event(c.x + 10, c.y + 15);
+  listeners.get("contextmenu")(toggle);
+  assert.equal(calls[1][0], "1");
+  const empty = event(-500, -500);
+  listeners.get("contextmenu")(empty);
+  assert.equal(calls.length, 2);
+  assert.equal(empty.prevented, undefined);
 });

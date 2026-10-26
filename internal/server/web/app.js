@@ -1,4 +1,5 @@
 import { TreeCanvas } from "./tree.js";
+import { NodeContextMenu, menuTarget, runNodeAction } from "./context-menu.js";
 const $ = (id) => document.getElementById(id);
 const source = $("source"),
   inspector = $("inspector");
@@ -49,6 +50,7 @@ async function api(path, data) {
   return result;
 }
 function setBusy(value) {
+  if (value) nodeMenu.close(false);
   busy = value;
   source.readOnly = value || showOriginal;
   document
@@ -100,6 +102,7 @@ function updateControls() {
   source.readOnly = showOriginal || busy;
 }
 async function install(next, { fit = false, imported = false } = {}) {
+  nodeMenu.close(false);
   state = next;
   sourceDirty = false;
   inspectorDirty = false;
@@ -164,6 +167,31 @@ async function select(id, guard = true) {
     status(e.message, true);
   }
 }
+const nodeMenu = new NodeContextMenu($("node-context-menu"), async (op, target) => {
+  if (target.revision !== state.revision) return;
+  await runNodeAction(op, target, state.format, {
+    ready: () => ready() && canLeaveInspector(),
+    prompt: (...args) => window.prompt(...args),
+    confirm: (message) => window.confirm(message),
+    mutate: (edit) => operation("/api/edit", edit),
+  });
+});
+function openNodeMenu(id, x, y, returnFocus = $("canvas-wrap")) {
+  nodeMenu.close(false);
+  if (!ready() || !canLeaveInspector()) return;
+  const target = menuTarget(tree.graph, id);
+  if (!target) return;
+  void select(id, false);
+  nodeMenu.open({ ...target, revision: state.revision }, state.format, x, y, returnFocus);
+}
+document.addEventListener("pointerdown", (event) => {
+  if (!nodeMenu.element.contains(event.target)) nodeMenu.close(false);
+});
+document.addEventListener("scroll", () => nodeMenu.close(), true);
+window.addEventListener("resize", () => nodeMenu.close());
+window.addEventListener("blur", () => nodeMenu.close(false));
+$("canvas").addEventListener("wheel", () => nodeMenu.close(), { passive: true });
+
 const tree = new TreeCanvas($("canvas"), {
   zoom: (n) => ($("zoom-label").textContent = `${n}%`),
   layout: (graph) => {
@@ -174,6 +202,17 @@ const tree = new TreeCanvas($("canvas"), {
         const b = document.createElement("button");
         b.textContent = `${"· ".repeat(c.depth)}${n.label} (${n.kind})`;
         b.addEventListener("click", () => select(n.id));
+        b.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          openNodeMenu(n.id, event.clientX, event.clientY, b);
+        });
+        b.addEventListener("keydown", (event) => {
+          if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+            event.preventDefault();
+            const box = b.getBoundingClientRect();
+            openNodeMenu(n.id, box.left, box.bottom, b);
+          }
+        });
         list.append(b);
       }
       if (["object", "array", "stream"].includes(c.kind)) {
@@ -189,8 +228,10 @@ const tree = new TreeCanvas($("canvas"), {
       );
   },
   action,
+  context: openNodeMenu,
 });
 async function action(hit) {
+  nodeMenu.close(false);
   try {
     if (hit.type === "select") {
       await select(hit.id);
@@ -213,6 +254,7 @@ async function action(hit) {
   }
 }
 source.addEventListener("input", () => {
+  nodeMenu.close(false);
   if (showOriginal) return;
   workingDraft = source.value;
   sourceDirty = source.value !== (state.source || "");

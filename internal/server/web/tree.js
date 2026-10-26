@@ -177,6 +177,16 @@ export class TreeCanvas {
       const hit = hitTest(this.graph, p.x, p.y);
       if (hit) this.callbacks.action(hit);
     });
+    c.addEventListener("contextmenu", (e) => {
+      const box = c.getBoundingClientRect();
+      const p = worldPoint(e.clientX - box.left, e.clientY - box.top, this.view);
+      const hit = hitTest(this.graph, p.x, p.y);
+      // Pagination controls are navigation, not a node action target.
+      if (!hit || hit.type === "page") return;
+      e.preventDefault();
+      down = null;
+      this.callbacks.context?.(hit.id, e.clientX, e.clientY);
+    });
     c.addEventListener("pointercancel", () => {
       down = null;
     });

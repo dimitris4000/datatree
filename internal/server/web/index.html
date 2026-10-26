@@ -118,7 +118,7 @@
             ><button id="collapse">Collapse all</button>
           </div>
           <div class="canvas-hint">
-            Drag to pan · Scroll to zoom · Click to inspect
+            Drag to pan · Scroll to zoom · Right-click for actions
           </div>
         </div>
         <details class="accessible-tree">
@@ -156,6 +156,12 @@
       ><span>Your files stay on this computer.</span
       ><span id="revision">Ready when you are.</span>
     </footer>
+    <div id="node-context-menu" class="node-context-menu" role="menu" aria-label="Node actions" tabindex="-1" hidden>
+      <div data-node-label class="node-context-label" aria-hidden="true"></div>
+      <button type="button" role="menuitem" data-node-action="clone">Duplicate…</button>
+      <button type="button" role="menuitem" data-node-action="rename">Rename…</button>
+      <button type="button" role="menuitem" data-node-action="delete" class="danger">Delete…</button>
+    </div>
     <dialog id="conversion">
       <form method="dialog">
         <div class="dialog-heading">

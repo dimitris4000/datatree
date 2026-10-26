@@ -1,6 +1,6 @@
 import { SourceEditor, normalizedSource, nodeAt, revealPath } from "./source-editor.js";
 import { setupInspectorFolding } from "./folding.js";
-import { TreeCanvas, expandLevels } from "./tree.js";
+import { TreeCanvas, expandLevels, collapseAll } from "./tree.js";
 import { NodeContextMenu, menuTarget, runNodeAction } from "./context-menu.js";
 const $ = (id) => document.getElementById(id);
 const source = $("source"),
@@ -474,7 +474,7 @@ $("expand-selected").addEventListener("click", () => {
 });
 $("collapse").addEventListener("click", () => {
   if (busy) return;
-  expanded.clear();
+  collapseAll(selection, sourceRanges, expanded);
   tree.relayout();
   tree.fit();
 });

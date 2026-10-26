@@ -20,6 +20,37 @@ const obj = (id, label, children) => ({
   total: children.length,
   children,
 });
+
+test("collapse all closes the selected subtree including hidden and off-page descendants", () => {
+  const ranges = [
+    { id: "root" }, { id: "selected", parent: "root" },
+    { id: "hidden", parent: "selected" }, { id: "deep", parent: "hidden" },
+    { id: "off-page", parent: "selected" },
+    { id: "sibling", parent: "root" }, { id: "other", parent: "sibling" },
+  ];
+  const expanded = new Set(["root", "selected", "deep", "off-page", "sibling", "other"]);
+  treeModule.collapseAll("selected", ranges, expanded);
+  assert.deepEqual([...expanded], ["root", "sibling", "other"]);
+  expanded.add("selected");
+  assert.equal(expanded.has("deep"), false, "reopening must not reopen descendants");
+});
+
+test("collapse all on a scalar leaves other branches expanded", () => {
+  const expanded = new Set(["root", "sibling"]);
+  treeModule.collapseAll("scalar", [
+    { id: "root" }, { id: "scalar", parent: "root" }, { id: "sibling", parent: "root" },
+  ], expanded);
+  assert.deepEqual([...expanded], ["root", "sibling"]);
+});
+
+test("collapse all at the root or without a selection collapses the whole tree", () => {
+  const ranges = [{ id: "root" }, { id: "child", parent: "root" }];
+  for (const selection of ["root", null]) {
+    const expanded = new Set(["root", "child"]);
+    treeModule.collapseAll(selection, ranges, expanded);
+    assert.equal(expanded.size, 0);
+  }
+});
 test("depth columns align despite unequal card widths and heights", () => {
   const a = obj("2", "short", [scalar("5", "x", "1")]);
   const b = obj("3", "much longer label", [

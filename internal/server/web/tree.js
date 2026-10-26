@@ -1,6 +1,24 @@
 const collection = (n) => ["object", "array", "stream"].includes(n.kind);
 const short = (s, n = 44) =>
   String(s).length > n ? String(s).slice(0, n - 1) + "…" : String(s);
+export function collapseAll(id, ranges, expanded) {
+  if (id == null) {
+    expanded.clear();
+    return;
+  }
+  // Use the full source hierarchy so earlier pages and hidden branches close too.
+  const children = new Map();
+  for (const range of ranges) {
+    if (!children.has(range.parent)) children.set(range.parent, []);
+    children.get(range.parent).push(range.id);
+  }
+  const pending = [id];
+  while (pending.length) {
+    const node = pending.pop();
+    expanded.delete(node);
+    for (const child of children.get(node) || []) pending.push(child);
+  }
+}
 // Expand loaded pages only; match the renderer's bounded exploration model.
 export async function expandLevels(id, levels, records, expanded, load) {
   if (!Number.isSafeInteger(levels) || levels < 1)

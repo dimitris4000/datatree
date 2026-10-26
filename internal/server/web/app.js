@@ -1,3 +1,4 @@
+import { revealResult, mountFindPanel } from "./find.js";
 import { SourceEditor, normalizedSource, nodeAt, revealPath } from "./source-editor.js";
 import { setupInspectorFolding } from "./folding.js";
 import { TreeCanvas, expandLevels, collapseAll } from "./tree.js";
@@ -83,6 +84,14 @@ async function page(id, offset = 0) {
   return n;
 }
 function updateControls() {
+  $("filename").textContent = state.filename || "Untitled document";
+  $("filename").title = state.filename || "";
+  const git = $("git-context");
+  git.hidden = !state.git;
+  git.textContent = state.git
+    ? `${state.git.branch || "Detached HEAD"} · ${state.git.commit.slice(0, 8)}` : "";
+  git.title = state.git
+    ? `${state.git.branch || "Detached HEAD"} · Git HEAD: ${state.git.commit} (working edits stay in memory)` : "";
   source.value = showOriginal ? original : state.source || workingDraft;
   $("format-badge").textContent = (
     state.format || $("input-format").value
@@ -111,6 +120,7 @@ function updateControls() {
 }
 async function install(next, { fit = false, imported = false } = {}) {
   nodeMenu.close(false);
+  findPanel.controller.clear();
   sourceSync++;
   sourceRanges = [];
   sourceByID = new Map();
@@ -281,6 +291,36 @@ const sourceEditor = new SourceEditor(source, $("source-lines"), $("source-posit
     if (current()) status(error.message, true);
   }
 });
+// Reuse the source map to reveal matches without downloading an expanded tree.
+const findPanel = mountFindPanel(document, {
+  invalidate: () => { sourceSync++; },
+  revision: () => state.revision,
+  load: async (options, revision) => {
+    if (!state.root) throw new Error("Open a file first.");
+    const query = new URLSearchParams({ ...options, revision });
+    return api(`/api/find?${query}`);
+  },
+  navigate: async (id) => {
+    if (!ready() || !canLeaveInspector()) return false;
+    const ticket = ++sourceSync, revision = state.revision;
+    const current = () => ticket === sourceSync && revision === state.revision && !sourceDirty;
+    setBusy(true);
+    try {
+      const revealed = await revealResult(id, {
+        ranges: sourceByID, records, expanded, load: page, current,
+        relayout: (priority) => { tree.relayout(priority); return tree.graph; },
+      });
+      if (!revealed) return false;
+      if (sourceSynchronized()) sourceEditor.highlight(sourceByID.get(id));
+      await select(id, false, false);
+      if (!current()) return false;
+      tree.focus(id);
+      return true;
+    } finally {
+      setBusy(false);
+    }
+  },
+});
 async function action(hit) {
   nodeMenu.close(false);
   try {
@@ -383,9 +423,22 @@ function sourceTab(isOriginal) {
 }
 $("working-tab").addEventListener("click", () => sourceTab(false));
 $("original-tab").addEventListener("click", () => sourceTab(true));
+$("open-file").addEventListener("click", () => {
+  if (!ready() || !canLeaveInspector()) return;
+  $("open-document").showModal();
+});
+$("close-open-document").addEventListener("click", () => $("open-document").close());
+$("local-file-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const path = $("local-path").value.trim();
+  if (!path) return;
+  $("open-document").close();
+  await operation("/api/open", { path }, { fit: true, imported: true });
+});
 $("file").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
+  $("open-document").close();
   try {
     if (file.size > 10 * 1024 * 1024) throw new Error("File exceeds 10 MB.");
     const ext = file.name.split(".").pop().toLowerCase();
@@ -399,10 +452,10 @@ $("file").addEventListener("change", async (e) => {
           await file.arrayBuffer(),
         ),
         format,
+        filename: file.name,
       },
       { fit: true, imported: true },
     );
-    if (state.format === format) $("filename").textContent = file.name;
   } catch (err) {
     status(err.message, true);
   } finally {
@@ -415,10 +468,10 @@ $("example").addEventListener("click", async () => {
     {
       text: JSON.stringify(JSON.parse($("example-data").textContent), null, 2),
       format: "json",
+      filename: "Super hero squad · example",
     },
     { fit: true, imported: true },
   );
-  $("filename").textContent = "Super hero squad · example";
 });
 $("undo").addEventListener("click", () =>
   operation("/api/history", { direction: "undo" }),

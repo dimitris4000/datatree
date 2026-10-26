@@ -252,3 +252,26 @@ func TestSourceMapRevisionAndIsolation(t *testing.T) {
 		t.Fatal("missing source editor asset")
 	}
 }
+
+func TestDocumentShellStatusRegionInFooter(t *testing.T) {
+	w := request(t, New(), "GET", "/", "", nil)
+	html := w.Body.String()
+	footer := regexp.MustCompile(`(?s)<footer>.*?</footer>`).FindString(html)
+	if strings.Count(html, `id="status"`) != 1 || !strings.Contains(footer, `id="status" role="status" aria-live="polite"`) {
+		t.Fatal("document operations need one live status region in the footer")
+	}
+}
+
+func TestDocumentShellHasOneFileOpeningEntry(t *testing.T) {
+	html := request(t, New(), "GET", "/", "", nil).Body.String()
+	toolbar := regexp.MustCompile(`(?s)<nav class="toolbar".*?</nav>`).FindString(html)
+	if !strings.Contains(toolbar, `id="open-file"`) || strings.Contains(toolbar, `type="file"`) || strings.Contains(toolbar, `id="open-path"`) {
+		t.Fatal("toolbar must have one file-opening button, with upload and path options in a dialog")
+	}
+	dialog := regexp.MustCompile(`(?s)<dialog id="open-document".*?</dialog>`).FindString(html)
+	for _, id := range []string{`id="file"`, `id="local-file-form"`, `id="local-path"`} {
+		if !strings.Contains(dialog, id) {
+			t.Fatalf("open dialog missing %s", id)
+		}
+	}
+}

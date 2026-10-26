@@ -24,6 +24,10 @@ Restart/rebuild the Go server afterward: frontend assets are embedded at build t
 
 ## Use
 
+The compact top toolbar combines file opening, document identity and editing controls. Status and error messages appear in the bottom footer.
+
+The toolbar has one **Open file** button. Its dialog offers a file picker or a local path. Enter an absolute path or a path relative to the server's working directory to open a local file with Git context. Tracked files show the current branch and short HEAD commit beside the filename; hover for the full hash. Detached checkouts show **Detached HEAD**. Git details refresh with state responses (including page reloads and edits), and describe the repository checkout, not a commit of your in-memory edits. Untracked files, files outside a repository, unborn repositories and systems without Git show no Git badge. The dialog’s file picker hides full paths, so picker uploads cannot supply Git context. All opening methods keep edits in memory and use **Download** to save a copy.
+
 - **Collapse all** in the tree controls collapses the selected node and every descendant, including hidden branches and other pages. Other branches retain their expansion state. With no selection, it collapses the entire tree.
 - **Source** on the left contains editable working text, line numbers, a line/column indicator and a read-only Original tab. Selecting a tree card or field highlights and scrolls to its source; moving the editor cursor or selecting text selects the smallest enclosing node in the tree and inspector, opening ancestors and loading the required pages. Selection stays in the editor while the inspector updates. Sync pauses for unapplied source drafts and for Original text that differs from the working document; apply or discard the draft to resume. Apply explicitly; invalid source stays in the editor and the tree retains its last valid state.
 - **Tree** supports drag-to-pan, wheel/button zoom, fit, and expand/collapse using the triangle on a collection card. Double-click a collection title to collapse it when expanded, or open its next level when collapsed. Select a collection to show the level input and **Expand X** button in the bottom controls; X levels are counted beneath that node, and existing expanded branches stay open. Expansion uses each collection’s current page (20 children) and stops after 1,000 collections per action. Collections show 20 children per page. Use the footer to page through fields or items. The keyboard node list below the canvas provides selection and expansion buttons; pane dividers also accept arrow keys.
@@ -41,7 +45,33 @@ Restart/rebuild the Go server afterward: frontend assets are embedded at build t
 | YAML | Document streams, complex keys, comments, styles, tags, anchors and aliases. Aliases appear as references and can be followed; they are not recursively expanded in the tree. |
 | CSV | A required, nonempty, unique header row; consistent row widths; string-valued cells. Edits must retain the original column names/order and row shape. |
 
-A scalar field's subtree is its value; its key belongs to the parent object. JSONPath is a copyable location, not a query engine. Keys use escaped bracket notation. YAML document streams and structures without a JSON-compatible path show line/column locations instead.
+A scalar field's subtree is its value; its key belongs to the parent object. The Inspector provides copyable JSONPath locations, which can also be pasted into the Find panel’s Path / query mode. Keys use escaped bracket notation. YAML document streams and structures without a JSON-compatible path show line/column locations instead.
+
+### Search and path queries
+
+Use **Search** above the tree to find literal text in keys, scalar values, or both. Matching ignores case unless **Match case** is checked. Search includes collapsed branches and other pages, and supports JSON, JSONL, YAML and CSV. It searches parsed content, rather than source comments or formatting; complex YAML keys are searched through their scalar parts. Alias values are searchable as `*anchor` references without following them.
+
+Switch to **Path / query**, enter an expression and choose **Find**:
+
+| Expression | Result |
+| --- | --- |
+| `$` | Document root |
+| `$.services[0].name` | First service’s name |
+| `$['a.b']['']` | Quoted keys, including dots or empty keys |
+| `$.services[*].name` | Every service’s name |
+| `$.settings.*` | Direct children of a mapping or sequence |
+| `$..name` or `$..['name']` | Every descendant property named `name` |
+| `$.services[?(@.replicas > 3)].name` | Names of services with more than three replicas |
+| `$.services[?(@.name == 'api')]` | Services with that exact name |
+| `$[?(@ >= 10)]` | Numeric items of a root array at least 10 |
+
+Quoted keys and string literals accept single or double quotes and JSON escapes; single-quoted strings additionally accept `\'`. Filters accept relative property/index paths and a string, JSON number, boolean or null literal. Supported operators are `==`, `!=`, `<`, `<=`, `>` and `>=`. Equality compares types as well as values. Missing properties never match, including `!= null`; ordered comparisons require two numbers or two strings. Numeric comparisons preserve precision, including large integers and exponents. YAML nonfinite values do not match numeric filters.
+
+This is a bounded query subset. Functions, scripts, slices, unions, recursive wildcards and compound predicates are unsupported. Queries do not expand aliases or resolve merge keys. YAML document streams require Search; complex or non-string mapping keys and their descendants are omitted from path queries.
+
+Results appear in document order, once per node. Select a result or use **Previous** / **Next** to reveal its ancestors and correct page, center the tree and update the Inspector and synchronized Source selection. A query with one result navigates immediately. Navigation preserves the existing subtree-draft confirmation and requires source drafts to be applied or discarded. Searching itself uses the last applied document. The Original tab only highlights when its text matches the applied document.
+
+Search and query text are limited to 4,096 UTF-8 bytes. Results are capped at 200 with a notice when more matches exist. Queries also have a 256-step limit and a work budget; numeric filter operands are limited to 4,096 bytes each. Narrow a query if a limit is reached. Results clear when the document changes or the search controls change. Finding and navigating never modify the document or its undo history.
 
 ### YAML preservation
 
@@ -59,7 +89,7 @@ CSV, JSON and JSONL tree edits regenerate that format's working text. Their orig
 - Rendering is limited to 1,000 visible cards, with viewport culling, collapsed branches and pagination. Large imports are parsed server-side; the whole expanded tree is never sent to the browser.
 - Up to 30 history revisions within a 64 MiB source-history budget. Oldest revisions are evicted when the budget is reached.
 - Browser sessions use HttpOnly, SameSite cookies. State is in memory, expires after 30 idle minutes, and disappears when the process stops. At most 16 sessions are retained; the least recently used is evicted when necessary. Tabs in the same browser session share a document; revision checks reject stale edits.
-- No authentication, collaboration, persistent disk storage or direct file overwrite. Requests require a loopback host and state changes require the same Origin. Assets are local and CSP blocks third-party connections.
+- No authentication, collaboration, persistent disk storage or direct file overwrite. Explicit local-path opening reads regular files on the server computer, subject to the same format and size limits. Requests require a loopback host and state changes require the same Origin. Assets are local and CSP blocks third-party connections.
 
 The node limit is checked while reading JSON and after YAML parsing; YAML's parser can temporarily allocate more than the final node budget. All file sizes remain limited to 10 MiB. Import parsing is synchronous and sessions share a server lock; this first version targets one local user.
 

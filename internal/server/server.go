@@ -26,8 +26,10 @@ import (
 var assets embed.FS
 
 type browserSession struct {
-	data    *document.Session
-	touched time.Time
+	data     *document.Session
+	filename string
+	path     string
+	touched  time.Time
 }
 type Server struct {
 	mu        sync.Mutex
@@ -98,11 +100,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		switch r.URL.Path {
 		case "/api/state":
-			state(w, d)
+			state(w, session)
 			return
 		case "/api/original":
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.Write(d.Original)
+			return
+		case "/api/find":
+			s.find(w, r, d)
 			return
 		case "/api/source-map":
 			if d.Doc == nil {
@@ -168,6 +173,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		document.Action
 		Revision  int    `json:"revision"`
 		Direction string `json:"direction"`
+		Path      string `json:"path"`
+		Filename  string `json:"filename"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, document.MaxBytes*6+4096)
 	if r.URL.Path == "/actions/edit" {
@@ -217,6 +224,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/import":
 		err = d.Import(in.Format, []byte(in.Text), in.Revision)
+		if err == nil {
+			session.path = ""
+			session.filename = in.Filename
+		}
+	case "/api/open":
+		err = session.openLocal(in.Path, in.Revision)
 	case "/api/apply":
 		err = d.Apply(in.Format, []byte(in.Text), in.Revision)
 	case "/api/edit", "/actions/edit":
@@ -258,7 +271,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	state(w, d)
+	state(w, session)
 }
 func checkQueryRevision(r *http.Request, d *document.Session) error {
 	q := r.URL.Query().Get("revision")
@@ -301,8 +314,15 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) *browserSession
 	http.SetCookie(w, &http.Cookie{Name: "datatree_session", Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	return v
 }
-func state(w http.ResponseWriter, d *document.Session) {
+func state(w http.ResponseWriter, session *browserSession) {
+	d := session.data
 	v := map[string]any{"revision": d.Revision, "canUndo": d.CanUndo(), "canRedo": d.CanRedo()}
+	if session.filename != "" {
+		v["filename"] = session.filename
+	}
+	if info := localGitInfo(session.path); info != nil {
+		v["git"] = info
+	}
 	if d.Doc != nil {
 		v["format"] = d.Doc.Format
 		v["source"] = string(d.Doc.Source)

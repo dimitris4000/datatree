@@ -42,7 +42,7 @@ export async function expandLevels(id, levels, records, expanded, load) {
   }
   return { truncated: false };
 }
-export function layout(root, records, expanded) {
+export function layout(root, records, expanded, priority = new Set()) {
   const cards = [],
     edges = [],
     widths = [];
@@ -70,12 +70,19 @@ export function layout(root, records, expanded) {
     cards.push(card);
     widths[depth] = Math.max(widths[depth] || 0, w);
     let sum = 0;
-    for (const child of branches) {
+    const ordered = priority.size
+      ? [...branches].sort((a, b) => Number(priority.has(b.id)) - Number(priority.has(a.id)))
+      : branches;
+    for (const child of ordered) {
       const branch = build(child, depth + 1);
       if (branch) {
         card.branches.push(branch);
         sum += branch.span + 26;
       }
+    }
+    if (priority.size) {
+      const positions = new Map(branches.map((child, index) => [child.id, index]));
+      card.branches.sort((a, b) => positions.get(a.id) - positions.get(b.id));
     }
     if (card.branches.length) sum -= 26;
     card.span = Math.max(h, sum);
@@ -273,10 +280,12 @@ export class TreeCanvas {
     this.root = root;
     this.records = records;
     this.expanded = expanded;
+    this.priority = new Set();
     this.relayout();
   }
-  relayout() {
-    if (this.root) this.graph = layout(this.root, this.records, this.expanded);
+  relayout(priority = this.priority || new Set()) {
+    this.priority = priority;
+    if (this.root) this.graph = layout(this.root, this.records, this.expanded, priority);
     this.draw();
     this.callbacks.layout?.(this.graph);
   }

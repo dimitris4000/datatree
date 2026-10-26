@@ -14,30 +14,15 @@
     <script type="module" src="/assets/app.js"></script>
   </head>
   <body>
-    <header>
-      <div class="brand">
-        <span class="brand-icon" aria-hidden="true">⌘</span>
-        <div>
-          Data Tree<span class="brand-subtitle"
-            >A little perspective for your data.</span
-          >
-        </div>
-      </div>
-      <div class="header-actions">
-        <span class="local-badge"><i></i> Local workspace</span
-        ><button id="example" type="button">Load example</button
-        ><label class="primary file-button"
-          >Open file<input
-            id="file"
-            type="file"
-            accept=".json,.jsonl,.ndjson,.yaml,.yml,.csv"
-        /></label>
-      </div>
-    </header>
     <nav class="toolbar" aria-label="Document tools">
+      <div class="toolbar-actions file-actions">
+        <button id="example" type="button">Load example</button>
+        <button id="open-file" type="button" class="primary">Open file</button>
+      </div>
       <div class="document-name">
         <span id="filename">Untitled document</span
         ><span id="format-badge" class="badge">JSON</span>
+        <span id="git-context" class="git-context" hidden></span>
       </div>
       <div class="toolbar-actions">
         <span id="node-count" class="muted"></span
@@ -50,9 +35,6 @@
         ><button id="download">↓ Download</button>
       </div>
     </nav>
-    <div id="status" role="status" aria-live="polite">
-      Open a file or load the example to begin.
-    </div>
     <main id="workspace">
       <section id="source-pane" class="pane">
         <div class="pane-heading">
@@ -100,6 +82,29 @@
           <h1>Tree view</h1>
           <span class="eyebrow">LEFT → RIGHT</span>
         </div>
+        <section class="find-panel" aria-label="Find nodes">
+          <form id="find-form" class="find-form">
+            <select id="find-mode" aria-label="Find mode">
+              <option value="search">Search</option>
+              <option value="query">Path / query</option>
+            </select>
+            <input id="find-text" type="text" maxlength="4096" aria-label="Search text or path query" aria-describedby="find-help" placeholder="Find keys or values…" spellcheck="false" />
+            <button id="find-submit" type="submit">Find</button>
+            <button id="find-clear" type="button">Clear</button>
+          </form>
+          <div id="find-options" class="find-options">
+            <label><input id="find-keys" type="checkbox" checked /> Keys</label>
+            <label><input id="find-values" type="checkbox" checked /> Values</label>
+            <label><input id="find-case" type="checkbox" /> Match case</label>
+          </div>
+          <p id="find-help" class="find-help">Search the applied document, including collapsed branches. Apply or discard source drafts before navigating.</p>
+          <div class="find-summary">
+            <span id="find-status" role="status" aria-live="polite"></span>
+            <button id="find-previous" type="button" disabled>Previous</button>
+            <button id="find-next" type="button" disabled>Next</button>
+          </div>
+          <ol id="find-results" class="find-results" aria-label="Find results" hidden></ol>
+        </section>
         <div
           id="canvas-wrap"
           tabindex="0"
@@ -161,9 +166,9 @@
       </aside>
     </main>
     <footer>
-      <span>JSON · JSONL · YAML · CSV</span
-      ><span>Your files stay on this computer.</span
-      ><span id="revision">Ready when you are.</span>
+      <span>JSON · JSONL · YAML · CSV</span>
+      <span id="status" role="status" aria-live="polite">Open a file or load the example to begin.</span>
+      <span id="revision">Ready when you are.</span>
     </footer>
     <div id="node-context-menu" class="node-context-menu" role="menu" aria-label="Node actions" tabindex="-1" hidden>
       <div data-node-label class="node-context-label" aria-hidden="true"></div>
@@ -171,6 +176,23 @@
       <button type="button" role="menuitem" data-node-action="rename">Rename…</button>
       <button type="button" role="menuitem" data-node-action="delete" class="danger">Delete…</button>
     </div>
+    <dialog id="open-document" aria-labelledby="open-document-title">
+      <div class="dialog-heading">
+        <h2 id="open-document-title">Open file</h2>
+        <button id="close-open-document" type="button" aria-label="Close">×</button>
+      </div>
+      <label for="file">Choose a file</label>
+      <input id="file" type="file" accept=".json,.jsonl,.ndjson,.yaml,.yml,.csv" />
+      <p>Or enter a local path to include Git branch and commit details.</p>
+      <form id="local-file-form">
+        <label for="local-path">Local file path</label>
+        <input id="local-path" type="text" required placeholder="/path/to/data.json" aria-describedby="local-path-help" />
+        <p id="local-path-help">Relative paths start from the server’s working directory.</p>
+        <div class="button-row">
+          <button type="submit" class="primary">Open</button>
+        </div>
+      </form>
+    </dialog>
     <dialog id="conversion">
       <form method="dialog">
         <div class="dialog-heading">

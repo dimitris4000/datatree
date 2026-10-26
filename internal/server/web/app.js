@@ -1,4 +1,5 @@
-import { TreeCanvas } from "./tree.js";
+import { setupInspectorFolding } from "./folding.js";
+import { TreeCanvas, expandLevels } from "./tree.js";
 import { NodeContextMenu, menuTarget, runNodeAction } from "./context-menu.js";
 const $ = (id) => document.getElementById(id);
 const source = $("source"),
@@ -52,6 +53,8 @@ async function api(path, data) {
 function setBusy(value) {
   if (value) nodeMenu.close(false);
   busy = value;
+  $("expand-levels").disabled = value;
+  $("expand-selected").disabled = value;
   source.readOnly = value || showOriginal;
   document
     .querySelectorAll(".toolbar-actions button,#apply,#file,#example")
@@ -108,6 +111,7 @@ async function install(next, { fit = false, imported = false } = {}) {
   inspectorDirty = false;
   workingDraft = state.source || "";
   selection = null;
+  $("selection-expansion").hidden = true;
   records = new Map();
   expanded = new Set();
   if (imported) original = await fetch("/api/original").then((r) => r.text());
@@ -151,6 +155,10 @@ async function select(id, guard = true) {
   if (guard && !canLeaveInspector()) return;
   selection = id;
   tree.selected = id;
+  const node = records.get(id) || tree.graph.cards
+    .flatMap((card) => [card, ...card.rows]).find((node) => node.id === id);
+  $("selection-expansion").hidden = !node ||
+    !["object", "array", "stream"].includes(node.kind);
   tree.draw();
   try {
     if (globalThis.htmx) {
@@ -202,6 +210,10 @@ const tree = new TreeCanvas($("canvas"), {
         const b = document.createElement("button");
         b.textContent = `${"· ".repeat(c.depth)}${n.label} (${n.kind})`;
         b.addEventListener("click", () => select(n.id));
+        b.addEventListener("dblclick", () => {
+          if (["object", "array", "stream"].includes(n.kind))
+            void action({ type: "expand", id: n.id, levels: 1 });
+        });
         b.addEventListener("contextmenu", (event) => {
           event.preventDefault();
           openNodeMenu(n.id, event.clientX, event.clientY, b);
@@ -236,6 +248,18 @@ async function action(hit) {
     if (hit.type === "select") {
       await select(hit.id);
       return;
+    }
+    if (busy) return;
+    if (hit.type === "expand") {
+      if (!ready()) return;
+      setBusy(true);
+      try {
+        const result = await expandLevels(hit.id, hit.levels, records, expanded, page);
+        if (result.truncated) status("Expansion limited to 1,000 collections. Select a branch to explore further.");
+      } finally {
+        tree.relayout();
+        setBusy(false);
+      }
     }
     if (hit.type === "toggle") {
       if (expanded.has(hit.id)) expanded.delete(hit.id);
@@ -273,6 +297,9 @@ source.addEventListener("keydown", (e) => {
     );
     source.dispatchEvent(new Event("input"));
   }
+});
+document.body.addEventListener("htmx:afterSwap", (event) => {
+  if (event.detail.target === inspector) setupInspectorFolding(inspector);
 });
 inspector.addEventListener("input", () => {
   inspectorDirty = true;
@@ -392,7 +419,18 @@ $("confirm-convert").addEventListener("click", async () => {
 $("zoom-in").addEventListener("click", () => tree.zoom(1.2));
 $("zoom-out").addEventListener("click", () => tree.zoom(1 / 1.2));
 $("fit").addEventListener("click", () => tree.fit());
+$("expand-levels").addEventListener("input", () => {
+  const input = $("expand-levels");
+  $("expand-selected").textContent = input.validity.valid
+    ? `Expand ${input.value}` : "Expand X";
+});
+$("expand-selected").addEventListener("click", () => {
+  const input = $("expand-levels");
+  if (selection && input.reportValidity())
+    void action({ type: "expand", id: selection, levels: Number(input.value) });
+});
 $("collapse").addEventListener("click", () => {
+  if (busy) return;
   expanded.clear();
   tree.relayout();
   tree.fit();

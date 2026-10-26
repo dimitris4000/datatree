@@ -116,9 +116,13 @@
             ><button id="zoom-in" aria-label="Zoom in">+</button
             ><span class="divider"></span><button id="fit">Fit view</button
             ><button id="collapse">Collapse all</button>
+            <span id="selection-expansion" hidden>
+              <input id="expand-levels" type="number" min="1" step="1" value="1" required aria-label="Levels to expand beneath selected node" />
+              <button id="expand-selected" type="button">Expand 1</button>
+            </span>
           </div>
           <div class="canvas-hint">
-            Drag to pan · Scroll to zoom · Right-click for actions
+            Drag to pan · Scroll to zoom · Double-click title to expand · Right-click for actions
           </div>
         </div>
         <details class="accessible-tree">

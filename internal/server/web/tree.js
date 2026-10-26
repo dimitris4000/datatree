@@ -1,6 +1,29 @@
 const collection = (n) => ["object", "array", "stream"].includes(n.kind);
 const short = (s, n = 44) =>
   String(s).length > n ? String(s).slice(0, n - 1) + "…" : String(s);
+// Expand loaded pages only; match the renderer's bounded exploration model.
+export async function expandLevels(id, levels, records, expanded, load) {
+  if (!Number.isSafeInteger(levels) || levels < 1)
+    throw new Error("Choose a positive whole number of levels.");
+  const queue = [{ id, depth: 0 }], seen = new Set();
+  let count = 0;
+  for (let i = 0; i < queue.length; i++) {
+    const item = queue[i];
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    let node = records.get(item.id);
+    if (node && !collection(node)) continue;
+    if (count >= 1000) return { truncated: true };
+    if (!node?.children) node = await load(item.id);
+    if (!collection(node)) continue;
+    expanded.add(item.id);
+    count++;
+    if (item.depth + 1 < levels)
+      for (const child of node.children || [])
+        if (collection(child)) queue.push({ id: child.id, depth: item.depth + 1 });
+  }
+  return { truncated: false };
+}
 export function layout(root, records, expanded) {
   const cards = [],
     edges = [],
@@ -176,6 +199,16 @@ export class TreeCanvas {
       );
       const hit = hitTest(this.graph, p.x, p.y);
       if (hit) this.callbacks.action(hit);
+    });
+    c.addEventListener("dblclick", (e) => {
+      const box = c.getBoundingClientRect();
+      const p = worldPoint(e.clientX - box.left, e.clientY - box.top, this.view);
+      const hit = hitTest(this.graph, p.x, p.y);
+      const card = this.graph.cards.find((card) => card.id === hit?.id);
+      if (hit?.type !== "select" || !card || !collection(card) || p.y >= card.y + 36)
+        return;
+      e.preventDefault();
+      this.callbacks.action({ type: "expand", id: card.id, levels: 1 });
     });
     c.addEventListener("contextmenu", (e) => {
       const box = c.getBoundingClientRect();

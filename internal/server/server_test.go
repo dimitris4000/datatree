@@ -189,7 +189,7 @@ func TestJSONToYAMLConversionWorkflow(t *testing.T) {
 		t.Fatal("preview changed working source")
 	}
 	w = request(t, h, "GET", "/inspector?node=1&revision=1", "", cookie)
-	if !strings.Contains(w.Body.String(), `<pre id="yaml-preview">`+want+`</pre>`) {
+	if !strings.Contains(w.Body.String(), `<pre data-fold-format="yaml" id="yaml-preview">`+want+`</pre>`) {
 		t.Fatal("inspector differs from preview")
 	}
 	w = request(t, h, "POST", "/api/convert", `{"format":"yaml","revision":1}`, cookie)

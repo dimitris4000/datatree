@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { TreeCanvas, layout, hitTest, worldPoint } from "./tree.js";
+import * as treeModule from "./tree.js";
+const expandLevels = (...args) => {
+  assert.equal(typeof treeModule.expandLevels, "function", "missing subtree expansion");
+  return treeModule.expandLevels(...args);
+};
 const scalar = (id, label, value) => ({
   id,
   label,
@@ -109,4 +114,64 @@ test("right click resolves the transformed node without selecting, toggling, or 
   listeners.get("contextmenu")(empty);
   assert.equal(calls.length, 2);
   assert.equal(empty.prevented, undefined);
+});
+
+
+test("double-click expands only collection titles under a transformed viewport", () => {
+  const root = obj("1", "$", [scalar("2", "name", "Alice")]);
+  const graph = layout(root, new Map([["1", root]]), new Set(["1"]));
+  const listeners = new Map(), calls = [];
+  const canvas = { setAttribute() {}, addEventListener: (type, fn) => listeners.set(type, fn),
+    getBoundingClientRect: () => ({ left: 100, top: 50 }) };
+  const tree = Object.create(TreeCanvas.prototype);
+  Object.assign(tree, { canvas, graph, view: { x: 30, y: 20, scale: 2 }, resize() {},
+    callbacks: { action: (hit) => calls.push(hit) } });
+  tree.bind();
+  assert.ok(listeners.has("dblclick"), "missing title double-click handler");
+  const c = graph.cards[0];
+  const click = (x, y) => listeners.get("dblclick")({
+    clientX: 130 + x * 2, clientY: 70 + y * 2, preventDefault() {} });
+  click(c.x + 70, c.y + 15);
+  assert.deepEqual(calls, [{ type: "expand", id: "1", levels: 1 }]);
+  click(c.x + 10, c.y + 15);
+  click(c.x + 70, c.y + 50);
+  click(-100, -100);
+  assert.equal(calls.length, 1);
+});
+
+test("expansion opens exactly X levels beneath the target and preserves other branches", async () => {
+  const leaf = obj("4", "leaf", []);
+  const grandchild = obj("3", "grandchild", [leaf]);
+  const child = obj("2", "child", [grandchild]);
+  const root = obj("1", "$", [child]);
+  const all = new Map([root, child, grandchild, leaf].map(n => [n.id, n]));
+  const records = new Map([["1", root], ["2", { ...child, children: undefined }]]);
+  const expanded = new Set(["1", "unrelated"]), loaded = [];
+  const load = async (id) => { loaded.push(id); const n = all.get(id); records.set(id, n); return n; };
+  await expandLevels("2", 2, records, expanded, load);
+  assert.deepEqual([...expanded].sort(), ["1", "2", "3", "unrelated"]);
+  assert.deepEqual(loaded, ["2", "3"]);
+  await expandLevels("2", 1, records, expanded, load);
+  assert.ok(expanded.has("3"), "expansion must not collapse deeper branches");
+  assert.deepEqual(loaded, ["2", "3"], "loaded pages should be reused");
+});
+
+test("expansion ignores scalars and rejects invalid depths without loading", async () => {
+  const records = new Map([["1", scalar("1", "name", "Alice")]]), expanded = new Set();
+  const load = () => assert.fail("unexpected page load");
+  await expandLevels("1", 2, records, expanded, load);
+  assert.equal(expanded.size, 0);
+  for (const depth of [0, -1, 1.5, NaN, Infinity])
+    await assert.rejects(() => expandLevels("1", depth, records, expanded, load));
+});
+
+test("expansion stays on the current page and bounds large traversals", async () => {
+  const children = Array.from({ length: 1100 }, (_, i) => obj(String(i + 2), "item", []));
+  const root = { ...obj("1", "$", children), offset: 20, total: 2000 };
+  const records = new Map([["1", root]]), expanded = new Set();
+  const load = async (id) => { const n = children.find(n => n.id === id); records.set(id, n); return n; };
+  const result = await expandLevels("1", 2, records, expanded, load);
+  assert.equal(result.truncated, true);
+  assert.equal(expanded.size, 1000);
+  assert.equal(records.get("1").offset, 20);
 });

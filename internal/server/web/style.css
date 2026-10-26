@@ -373,6 +373,16 @@ textarea {
   box-shadow: 0 4px 15px #223c2910;
   white-space: nowrap;
 }
+#selection-expansion:not([hidden]) {
+  display: flex;
+  align-items: center;
+}
+#selection-expansion #expand-levels {
+  width: 48px;
+  margin: 0;
+  padding: 5px;
+  font-size: 10px;
+}
 .canvas-tools button {
   font-size: 10px;
   border: 0;
@@ -647,3 +657,29 @@ dialog pre {
   outline-offset: -2px;
   background: var(--mint);
 }
+
+.fold-view[hidden], .fold-tools[hidden] { display: none; }
+.fold-tools { margin: 8px 0; flex-wrap: wrap; }
+.fold-tools button { font-size: 10px; padding: 5px 8px; }
+.fold-code {
+  max-height: 400px;
+  overflow: auto;
+  padding: 8px 4px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #f7f9f3;
+  font: 10px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.fold-line { display: flex; align-items: baseline; min-height: 20px; width: max-content; min-width: 100%; white-space: pre; }
+.fold-toggle {
+  display: inline-block;
+  flex: 0 0 22px;
+  width: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--green);
+  text-align: center;
+}
+.fold-hint { color: var(--muted); padding-right: 8px; }

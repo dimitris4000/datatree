@@ -1,0 +1,22 @@
+<div class="selection-title"><span class="eyebrow">SELECTED {{.Node.Kind}}</span><h2>{{.Node.Label}}</h2></div>
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+<label>Location</label><div class="path-line"><code id="selected-path">{{if .Node.Path}}{{.Node.Path}}{{else}}YAML location: {{.Node.Location}}{{end}}</code><button type="button" data-copy="selected-path" title="Copy location">Copy</button></div>
+{{if .Node.Target}}<button type="button" data-reference="{{.Node.Target}}">Follow {{.Node.Value}}</button>{{end}}
+<details open><summary>Subtree</summary>
+<label for="subtree">{{.NativeFormat}} · editable</label>
+<form hx-post="/actions/edit" hx-target="#inspector" hx-swap="innerHTML" class="edit-form">
+<input type="hidden" name="op" value="replace"><input type="hidden" name="node" value="{{.Node.ID}}"><input type="hidden" name="revision" value="{{.Revision}}"><input type="hidden" name="format" value="{{.NativeFormat}}">
+<textarea id="subtree" name="text" spellcheck="false" rows="13">{{if eq .NativeFormat "yaml"}}{{.YAML}}{{else}}{{.JSON}}{{end}}</textarea>
+<div class="button-row"><button class="primary" type="submit">Apply subtree</button><button type="button" data-copy="subtree">Copy</button></div>
+</form></details>
+<details><summary>JSON representation</summary>{{if .JSONError}}<p class="muted">{{.JSONError}}</p><p class="muted">Use Convert in the toolbar to preview a deliberate conversion of the document.</p>{{else}}<pre id="json-preview">{{.JSON}}</pre><button type="button" data-copy="json-preview">Copy JSON</button>{{end}}</details>
+<details><summary>YAML representation</summary><pre id="yaml-preview">{{.YAML}}</pre><button type="button" data-copy="yaml-preview">Copy YAML</button></details>
+{{if .Scalar}}<details><summary>Edit value</summary><form hx-post="/actions/edit" hx-target="#inspector" class="edit-form">
+<input type="hidden" name="op" value="replace"><input type="hidden" name="node" value="{{.Node.ID}}"><input type="hidden" name="revision" value="{{.Revision}}"><input type="hidden" name="structured" value="true">
+<label>Type<select name="kind"><option value="string" {{if eq .Node.Kind "string"}}selected{{end}}>String</option><option value="number" {{if eq .Node.Kind "number"}}selected{{end}}>Number</option><option value="boolean" {{if eq .Node.Kind "boolean"}}selected{{end}}>Boolean</option><option value="null" {{if eq .Node.Kind "null"}}selected{{end}}>Null</option></select></label><label>Value<input name="value" value="{{.Node.Value}}"></label>
+<label class="check"><input type="checkbox" name="confirm" value="true"> Allow replacing YAML metadata on this value</label><button type="submit">Apply value</button></form></details>{{end}}
+{{if or (eq .Node.Kind "object") (eq .Node.Kind "array")}}<details><summary>Add entry</summary><form hx-post="/actions/edit" hx-target="#inspector" class="edit-form">
+<input type="hidden" name="op" value="add"><input type="hidden" name="node" value="{{.Node.ID}}"><input type="hidden" name="revision" value="{{.Revision}}"><input type="hidden" name="format" value="{{.NativeFormat}}">
+{{if eq .Node.Kind "object"}}<label>New key<input name="key" required></label>{{end}}<label>Value ({{.NativeFormat}})<textarea name="text" rows="3" spellcheck="false">null</textarea></label><button type="submit">Add entry</button></form></details>{{end}}
+{{if .HasParent}}<details><summary>Duplicate or remove</summary><form hx-post="/actions/edit" hx-target="#inspector" class="edit-form">
+<input type="hidden" name="node" value="{{.Node.ID}}"><input type="hidden" name="revision" value="{{.Revision}}"><label>Destination key (objects only)<input name="key" placeholder="New unique key"></label><div class="button-row"><button name="op" value="clone" type="submit">Duplicate</button>{{if .CanRename}}<button name="op" value="rename" type="submit">Rename</button>{{end}}<button class="danger" name="op" value="delete" type="submit" data-destructive="true">Delete</button></div></form></details>{{end}}

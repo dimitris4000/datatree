@@ -1,0 +1,8 @@
+{
+  "name": "datatree-ui-checks",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test internal/server/web/*.test.js"
+  }
+}

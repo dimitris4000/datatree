@@ -1,0 +1,466 @@
+import { TreeCanvas } from "./tree.js";
+const $ = (id) => document.getElementById(id);
+const source = $("source"),
+  inspector = $("inspector");
+let state = { revision: 0 },
+  original = "",
+  workingDraft = "",
+  sourceDirty = false,
+  inspectorDirty = false,
+  showOriginal = false,
+  busy = false,
+  selection = null,
+  conversion = null;
+let records = new Map(),
+  expanded = new Set();
+function status(message, error = false) {
+  $("status").textContent = message;
+  $("status").classList.toggle("error", error);
+}
+function canLeaveInspector() {
+  if (!inspectorDirty) return true;
+  if (!confirm("Discard the unapplied subtree edit?")) return false;
+  inspectorDirty = false;
+  return true;
+}
+function ready() {
+  if (busy) {
+    status("Wait for the current operation.");
+    return false;
+  }
+  if (sourceDirty) {
+    status("Apply or discard the source draft before changing the tree.", true);
+    return false;
+  }
+  return true;
+}
+async function api(path, data) {
+  const options =
+    data === undefined
+      ? {}
+      : {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...data, revision: state.revision }),
+        };
+  const r = await fetch(path, options);
+  const result = await r.json();
+  if (!r.ok) throw new Error(result.error || `Request failed (${r.status})`);
+  return result;
+}
+function setBusy(value) {
+  busy = value;
+  source.readOnly = value || showOriginal;
+  document
+    .querySelectorAll(".toolbar-actions button,#apply,#file,#example")
+    .forEach((b) => (b.disabled = value));
+  if (!value) {
+    $("undo").disabled = !state.canUndo;
+    $("redo").disabled = !state.canRedo;
+    $("apply").disabled = showOriginal;
+  }
+}
+function ingest(n) {
+  records.set(n.id, n);
+  for (const c of n.children || []) {
+    if (c.children) ingest(c);
+  }
+}
+async function page(id, offset = 0) {
+  const n = await api(
+    `/api/tree?node=${encodeURIComponent(id)}&offset=${offset}&limit=20&revision=${state.revision}`,
+  );
+  ingest(n);
+  return n;
+}
+function updateControls() {
+  source.value = showOriginal ? original : state.source || workingDraft;
+  $("format-badge").textContent = (
+    state.format || $("input-format").value
+  ).toUpperCase();
+  if (state.format) $("input-format").value = state.format;
+  $("input-format").disabled = !!state.format;
+  $("node-count").textContent = state.nodes
+    ? `${state.nodes.toLocaleString()} nodes`
+    : "";
+  $("revision").textContent = state.root
+    ? `Revision ${state.revision} · Changes in memory`
+    : "Ready when you are.";
+  $("undo").disabled = !state.canUndo;
+  $("redo").disabled = !state.canRedo;
+  $("empty").hidden = !!state.root;
+  $("draft-state").textContent = sourceDirty
+    ? "Unapplied changes"
+    : "No changes";
+  $("apply").disabled = showOriginal;
+  $("working-tab").classList.toggle("active", !showOriginal);
+  $("original-tab").classList.toggle("active", showOriginal);
+  $("working-tab").setAttribute("aria-pressed", String(!showOriginal));
+  $("original-tab").setAttribute("aria-pressed", String(showOriginal));
+  source.readOnly = showOriginal || busy;
+}
+async function install(next, { fit = false, imported = false } = {}) {
+  state = next;
+  sourceDirty = false;
+  inspectorDirty = false;
+  workingDraft = state.source || "";
+  selection = null;
+  records = new Map();
+  expanded = new Set();
+  if (imported) original = await fetch("/api/original").then((r) => r.text());
+  updateControls();
+  if (state.root) {
+    const root = await page(state.root);
+    expanded.add(root.id);
+    // Open the first level of containers, bounded by the first page.
+    for (const child of root.children || []) {
+      if (["object", "array", "stream"].includes(child.kind)) {
+        await page(child.id);
+        expanded.add(child.id);
+        const childData = records.get(child.id);
+        for (const grandchild of childData.children || []) {
+          if (grandchild.kind === "object") expanded.add(grandchild.id);
+        }
+      }
+    }
+    tree.install(root, records, expanded);
+    if (fit) tree.fit();
+    await select(root.id, false);
+  }
+}
+async function operation(path, data, options = {}) {
+  if (!ready() || !canLeaveInspector()) return;
+  setBusy(true);
+  try {
+    await install(await api(path, data), options);
+    status(
+      options.imported
+        ? "File opened. Click a field or card to inspect it."
+        : "Changes applied. Download to save a copy.",
+    );
+  } catch (e) {
+    status(e.message, true);
+  } finally {
+    setBusy(false);
+  }
+}
+async function select(id, guard = true) {
+  if (guard && !canLeaveInspector()) return;
+  selection = id;
+  tree.selected = id;
+  tree.draw();
+  try {
+    if (globalThis.htmx) {
+      await htmx.ajax(
+        "GET",
+        `/inspector?node=${encodeURIComponent(id)}&revision=${state.revision}`,
+        { target: "#inspector", swap: "innerHTML" },
+      );
+    } else {
+      throw new Error("htmx failed to load. Reload this page.");
+    }
+    inspectorDirty = false;
+  } catch (e) {
+    status(e.message, true);
+  }
+}
+const tree = new TreeCanvas($("canvas"), {
+  zoom: (n) => ($("zoom-label").textContent = `${n}%`),
+  layout: (graph) => {
+    const list = $("node-list");
+    list.replaceChildren();
+    for (const c of graph.cards) {
+      for (const n of [c, ...c.rows]) {
+        const b = document.createElement("button");
+        b.textContent = `${"· ".repeat(c.depth)}${n.label} (${n.kind})`;
+        b.addEventListener("click", () => select(n.id));
+        list.append(b);
+      }
+      if (["object", "array", "stream"].includes(c.kind)) {
+        const b = document.createElement("button");
+        b.textContent = `${c.open ? "Collapse" : "Expand"} ${c.label}`;
+        b.addEventListener("click", () => action({ type: "toggle", id: c.id }));
+        list.append(b);
+      }
+    }
+    if (graph.truncated)
+      status(
+        "Visible tree limited to 1,000 cards. Collapse branches to explore others.",
+      );
+  },
+  action,
+});
+async function action(hit) {
+  try {
+    if (hit.type === "select") {
+      await select(hit.id);
+      return;
+    }
+    if (hit.type === "toggle") {
+      if (expanded.has(hit.id)) expanded.delete(hit.id);
+      else {
+        await page(hit.id);
+        expanded.add(hit.id);
+      }
+      tree.relayout();
+    }
+    if (hit.type === "page") {
+      await page(hit.id, hit.offset);
+      tree.relayout();
+    }
+  } catch (e) {
+    status(e.message, true);
+  }
+}
+source.addEventListener("input", () => {
+  if (showOriginal) return;
+  workingDraft = source.value;
+  sourceDirty = source.value !== (state.source || "");
+  $("draft-state").textContent = sourceDirty
+    ? "Unapplied changes"
+    : "No changes";
+});
+source.addEventListener("keydown", (e) => {
+  if (e.key === "Tab") {
+    e.preventDefault();
+    source.setRangeText(
+      "  ",
+      source.selectionStart,
+      source.selectionEnd,
+      "end",
+    );
+    source.dispatchEvent(new Event("input"));
+  }
+});
+inspector.addEventListener("input", () => {
+  inspectorDirty = true;
+});
+$("apply").addEventListener("click", async () => {
+  if (busy || showOriginal || !canLeaveInspector()) return;
+  setBusy(true);
+  try {
+    const imported = !state.root;
+    const next = await api(imported ? "/api/import" : "/api/apply", {
+      text: source.value,
+      format: state.format || $("input-format").value,
+    });
+    await install(next, { fit: imported, imported });
+    status("Source applied. The tree shows the validated document.");
+  } catch (e) {
+    status(e.message, true);
+  } finally {
+    setBusy(false);
+  }
+});
+$("discard").addEventListener("click", () => {
+  workingDraft = state.source || "";
+  sourceDirty = false;
+  updateControls();
+  status("Source draft discarded.");
+});
+function sourceTab(isOriginal) {
+  if (!showOriginal) workingDraft = source.value;
+  showOriginal = isOriginal;
+  updateControls();
+  if (!isOriginal) {
+    source.value = workingDraft;
+    $("draft-state").textContent = sourceDirty
+      ? "Unapplied changes"
+      : "No changes";
+  }
+}
+$("working-tab").addEventListener("click", () => sourceTab(false));
+$("original-tab").addEventListener("click", () => sourceTab(true));
+$("file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    if (file.size > 10 * 1024 * 1024) throw new Error("File exceeds 10 MB.");
+    const ext = file.name.split(".").pop().toLowerCase();
+    const format = ext === "yml" ? "yaml" : ext === "ndjson" ? "jsonl" : ext;
+    if (!["json", "jsonl", "yaml", "csv"].includes(format))
+      throw new Error("Choose a JSON, JSONL, YAML or CSV file.");
+    await operation(
+      "/api/import",
+      {
+        text: new TextDecoder("utf-8", { fatal: true }).decode(
+          await file.arrayBuffer(),
+        ),
+        format,
+      },
+      { fit: true, imported: true },
+    );
+    if (state.format === format) $("filename").textContent = file.name;
+  } catch (err) {
+    status(err.message, true);
+  } finally {
+    e.target.value = "";
+  }
+});
+$("example").addEventListener("click", async () => {
+  await operation(
+    "/api/import",
+    {
+      text: JSON.stringify(JSON.parse($("example-data").textContent), null, 2),
+      format: "json",
+    },
+    { fit: true, imported: true },
+  );
+  $("filename").textContent = "Super hero squad · example";
+});
+$("undo").addEventListener("click", () =>
+  operation("/api/history", { direction: "undo" }),
+);
+$("redo").addEventListener("click", () =>
+  operation("/api/history", { direction: "redo" }),
+);
+$("download").addEventListener("click", () => {
+  if (!ready() || !canLeaveInspector()) return;
+  if (!state.root) {
+    status("Open a file first.", true);
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = "/api/download";
+  a.download = `document.${state.format}`;
+  a.click();
+});
+$("convert").addEventListener("click", async () => {
+  if (!ready() || !canLeaveInspector()) return;
+  try {
+    conversion = await api("/api/preview", {
+      format: $("conversion-format").value,
+    });
+    $("conversion-preview").textContent = conversion.text;
+    $("conversion").showModal();
+  } catch (e) {
+    status(e.message, true);
+  }
+});
+$("confirm-convert").addEventListener("click", async () => {
+  if (!conversion) return;
+  if (conversion.revision !== state.revision) {
+    status("The conversion preview is stale. Preview again.", true);
+    return;
+  }
+  $("conversion").close();
+  await operation("/api/convert", { format: conversion.format, confirm: true });
+  conversion = null;
+});
+$("zoom-in").addEventListener("click", () => tree.zoom(1.2));
+$("zoom-out").addEventListener("click", () => tree.zoom(1 / 1.2));
+$("fit").addEventListener("click", () => tree.fit());
+$("collapse").addEventListener("click", () => {
+  expanded.clear();
+  tree.relayout();
+  tree.fit();
+});
+document.body.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-copy],[data-reference]");
+  if (!b) return;
+  if (b.dataset.copy) {
+    try {
+      const n = $(b.dataset.copy);
+      await navigator.clipboard.writeText(n.value ?? n.textContent);
+      status("Copied to clipboard.");
+    } catch {
+      status(
+        "Clipboard access is unavailable. Select and copy the text manually.",
+        true,
+      );
+    }
+  }
+  if (b.dataset.reference) {
+    await select(b.dataset.reference);
+    tree.focus(b.dataset.reference);
+  }
+});
+document.body.addEventListener("htmx:confirm", (e) => {
+  const form = e.detail.elt;
+  if (!form.closest("#inspector")) return;
+  if (!ready()) {
+    e.preventDefault();
+    return;
+  }
+  const button = e.detail.triggeringEvent?.submitter;
+  if (
+    button?.dataset.destructive &&
+    !confirm("Delete this node and its subtree? You can undo this change.")
+  ) {
+    e.preventDefault();
+    return;
+  }
+  setBusy(true);
+});
+document.body.addEventListener("htmx:afterRequest", (e) => {
+  if (e.detail.elt.closest?.("#inspector")) setBusy(false);
+});
+document.body.addEventListener("htmx:responseError", () => {
+  setBusy(false);
+  status("Inspector request failed. Your working document is unchanged.", true);
+});
+document.body.addEventListener("documentChanged", async () => {
+  try {
+    await install(await api("/api/state"));
+    status("Tree edit applied. Download to save a copy.");
+  } catch (e) {
+    status(e.message, true);
+  } finally {
+    setBusy(false);
+  }
+});
+for (const [id, property, sign, min, max] of [
+  ["resize-source", "--source-width", 1, 180, 550],
+  ["resize-inspector", "--inspector-width", -1, 220, 550],
+]) {
+  const handle = $(id);
+  handle.addEventListener("pointerdown", (e) => {
+    const start = e.clientX;
+    const initial =
+      id === "resize-source"
+        ? $("source-pane").offsetWidth
+        : $("inspector-pane").offsetWidth;
+    handle.setPointerCapture(e.pointerId);
+    const move = (ev) =>
+      document.documentElement.style.setProperty(
+        property,
+        Math.min(max, Math.max(min, initial + (ev.clientX - start) * sign)) +
+          "px",
+      );
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+  });
+  handle.addEventListener("keydown", (e) => {
+    if (!["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    e.preventDefault();
+    const pane =
+      id === "resize-source" ? $("source-pane") : $("inspector-pane");
+    document.documentElement.style.setProperty(
+      property,
+      Math.min(
+        max,
+        Math.max(
+          min,
+          pane.offsetWidth + (e.key === "ArrowRight" ? 10 : -10) * sign,
+        ),
+      ) + "px",
+    );
+  });
+}
+window.addEventListener("beforeunload", (e) => {
+  if (sourceDirty || inspectorDirty) {
+    e.preventDefault();
+    e.returnValue = "";
+  }
+});
+try {
+  const initial = await api("/api/state");
+  if (initial.root) await install(initial, { fit: true, imported: true });
+  else updateControls();
+} catch (e) {
+  status(e.message, true);
+}

@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="htmx-config"
+      content='{"allowEval":false,"includeIndicatorStyles":false,"historyCacheSize":0}'
+    />
+    <title>Data Tree · Explore your data</title>
+    <link rel="stylesheet" href="/assets/style.css" />
+    <script defer src="/vendor/htmx.min.js"></script>
+    <script defer src="/vendor/p5.min.js"></script>
+    <script type="module" src="/assets/app.js"></script>
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="brand-icon" aria-hidden="true">⌘</span>
+        <div>
+          Data Tree<span class="brand-subtitle"
+            >A little perspective for your data.</span
+          >
+        </div>
+      </div>
+      <div class="header-actions">
+        <span class="local-badge"><i></i> Local workspace</span
+        ><button id="example" type="button">Load example</button
+        ><label class="primary file-button"
+          >Open file<input
+            id="file"
+            type="file"
+            accept=".json,.jsonl,.ndjson,.yaml,.yml,.csv"
+        /></label>
+      </div>
+    </header>
+    <nav class="toolbar" aria-label="Document tools">
+      <div class="document-name">
+        <span id="filename">Untitled document</span
+        ><span id="format-badge" class="badge">JSON</span>
+      </div>
+      <div class="toolbar-actions">
+        <span id="node-count" class="muted"></span
+        ><button id="undo" disabled>↶ Undo</button
+        ><button id="redo" disabled>↷ Redo</button><span class="divider"></span
+        ><select id="conversion-format" aria-label="Conversion format">
+          <option value="json">JSON</option>
+          <option value="yaml">YAML</option></select
+        ><button id="convert">Convert…</button
+        ><button id="download">↓ Download</button>
+      </div>
+    </nav>
+    <div id="status" role="status" aria-live="polite">
+      Open a file or load the example to begin.
+    </div>
+    <main id="workspace">
+      <section id="source-pane" class="pane">
+        <div class="pane-heading">
+          <h1>Source</h1>
+          <div class="tabs" role="group" aria-label="Source version">
+            <button id="working-tab" class="active" aria-pressed="true">
+              Working</button
+            ><button id="original-tab" aria-pressed="false">Original</button>
+          </div>
+        </div>
+        <div class="source-tools">
+          <select id="input-format" aria-label="Source format">
+            <option value="json">JSON</option>
+            <option value="jsonl">JSONL</option>
+            <option value="yaml">YAML</option>
+            <option value="csv">CSV</option></select
+          ><span id="draft-state">No changes</span>
+        </div>
+        <textarea
+          id="source"
+          aria-label="Document source"
+          spellcheck="false"
+          placeholder="Paste your data here, or open a file…"
+        ></textarea>
+        <div class="pane-footer">
+          <button id="discard">Discard draft</button
+          ><button id="apply" class="primary">Apply source</button>
+        </div>
+      </section>
+      <div
+        class="resizer"
+        id="resize-source"
+        role="separator"
+        aria-label="Resize source pane"
+        aria-orientation="vertical"
+        tabindex="0"
+      ></div>
+      <section id="tree-pane" class="pane">
+        <div class="pane-heading">
+          <h1>Tree view</h1>
+          <span class="eyebrow">LEFT → RIGHT</span>
+        </div>
+        <div
+          id="canvas-wrap"
+          tabindex="0"
+          role="application"
+          aria-label="Data tree. Drag to pan, scroll to zoom. Use the node list for keyboard selection."
+        >
+          <div id="canvas"></div>
+          <div id="empty">
+            <div class="empty-glyph">{ }</div>
+            <h2>Give your data some space.</h2>
+            <p>
+              Objects, arrays, and everything in between.<br />Open a file to
+              see how it all connects.
+            </p>
+          </div>
+          <div class="canvas-tools">
+            <button id="zoom-out" aria-label="Zoom out">−</button
+            ><span id="zoom-label">100%</span
+            ><button id="zoom-in" aria-label="Zoom in">+</button
+            ><span class="divider"></span><button id="fit">Fit view</button
+            ><button id="collapse">Collapse all</button>
+          </div>
+          <div class="canvas-hint">
+            Drag to pan · Scroll to zoom · Click to inspect
+          </div>
+        </div>
+        <details class="accessible-tree">
+          <summary>Keyboard node selection</summary>
+          <div id="node-list"></div>
+        </details>
+      </section>
+      <div
+        class="resizer"
+        id="resize-inspector"
+        role="separator"
+        aria-label="Resize inspector pane"
+        aria-orientation="vertical"
+        tabindex="0"
+      ></div>
+      <aside id="inspector-pane" class="pane">
+        <div class="pane-heading">
+          <h1>Inspector</h1>
+          <span class="selection-dot"></span>
+        </div>
+        <div id="inspector">
+          <div class="inspector-empty">
+            <span>↖</span>
+            <h2>A closer look.</h2>
+            <p>
+              Select a card or field to inspect its path, edit a value, or
+              duplicate a subtree.
+            </p>
+          </div>
+        </div>
+      </aside>
+    </main>
+    <footer>
+      <span>JSON · JSONL · YAML · CSV</span
+      ><span>Your files stay on this computer.</span
+      ><span id="revision">Ready when you are.</span>
+    </footer>
+    <dialog id="conversion">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <h2>Preview conversion</h2>
+          <button value="cancel" aria-label="Close">×</button>
+        </div>
+        <p>
+          Conversion creates a new working representation. JSON removes
+          comments, tags, styles, and anchor identities, and expands aliases and
+          merges. The original stays available. Undo restores the previous
+          source.
+        </p>
+        <pre id="conversion-preview"></pre>
+        <div class="button-row">
+          <button value="cancel">Cancel</button
+          ><button id="confirm-convert" type="button" class="primary">
+            Confirm conversion
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <script type="application/json" id="example-data">
+      {
+        "squadName": "Super hero squad",
+        "homeTown": "Metro City",
+        "formed": 2016,
+        "secretBase": "Super tower",
+        "active": true,
+        "members": [
+          {
+            "name": "Molecule Man",
+            "age": 29,
+            "secretIdentity": "Dan Jukes",
+            "powers": [
+              "Radiation resistance",
+              "Turning tiny",
+              "Radiation blast"
+            ]
+          },
+          {
+            "name": "Madame Uppercut",
+            "age": 39,
+            "secretIdentity": "Jane Wilson",
+            "powers": [
+              "Million tonne punch",
+              "Damage resistance",
+              "Superhuman reflexes"
+            ]
+          },
+          {
+            "name": "Eternal Flame",
+            "age": 1000000,
+            "secretIdentity": "Unknown",
+            "powers": [
+              "Immortality",
+              "Heat immunity",
+              "Inferno",
+              "Teleportation"
+            ]
+          }
+        ]
+      }
+    </script>
+  </body>
+</html>

@@ -27,3 +27,14 @@ Regression coverage includes nested objects and arrays, empty collections, multi
 Right-click uses the canvas hit test and viewport transform to target card headers or object scalar fields. An HTML menu shares the existing edit endpoint and draft/busy guards. Object duplicates and renames prompt for a key; array items duplicate directly; deletion confirms. Root actions, array renaming and CSV cell shape changes are disabled. Existing inspector controls remain available.
 
 The menu supports arrow keys, Home/End, Escape and Shift+F10 from the node list. It stays within the viewport and closes on outside pointer input, pan/zoom, scrolling, resize, focus loss or document changes. JavaScript regression tests cover hit targeting, action eligibility, cancellation, request payloads, positioning, focus and keyboard dismissal.
+
+
+## Source editor selection
+
+The native textarea has an unwrapped, viewport-sized line-number gutter, a line/column indicator, and a text mirror that keeps source highlights visible after focus moves to the tree. The gutter renders only visible lines. The editor retains native keyboard, selection, clipboard and IME behavior.
+
+`GET /api/source-map?revision=N` returns a bounded, flat index of node IDs, parent IDs, child positions and source ranges, without scalar values or the complete expanded tree. Ranges include mapping keys and use textarea coordinates: UTF-16 code units with CRLF normalized to LF. JSON/JSONL/YAML use parser spans; CSV positions come from the standard CSV reader, with quoted and multiline fields scanned to their closing quotes. The synthetic root covers the whole source.
+
+Tree selection highlights the corresponding source range without stealing focus. Editor caret and selection changes are debounced and choose the smallest enclosing range; selections spanning siblings choose their common container. Ancestor pages are loaded before revealing the node. Programmatic highlights suppress feedback, pending reveals are invalidated by revisions, edits, tabs and tree selections, and existing inspector draft confirmation remains in effect. Source sync runs only when displayed text matches the applied document, including the Original tab only when its text is identical. Existing canvas card limits remain in effect.
+
+Verification covers Unicode, CRLF, YAML keys, JSONL roots, CSV multiline fields, range hierarchy, revision and session isolation, off-page reveal paths, viewport gutter numbering, source highlights and selection feedback suppression. Live browser verification for this change is unavailable because no browser is connected to the computer-use tool.

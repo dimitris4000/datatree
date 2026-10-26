@@ -117,26 +117,39 @@ test("right click resolves the transformed node without selecting, toggling, or 
 });
 
 
-test("double-click expands only collection titles under a transformed viewport", () => {
+test("double-click toggles collection titles under a transformed viewport", () => {
   const root = obj("1", "$", [scalar("2", "name", "Alice")]);
-  const graph = layout(root, new Map([["1", root]]), new Set(["1"]));
+  const records = new Map([["1", root]]), expanded = new Set(["1"]);
+  const graph = layout(root, records, expanded);
   const listeners = new Map(), calls = [];
   const canvas = { setAttribute() {}, addEventListener: (type, fn) => listeners.set(type, fn),
     getBoundingClientRect: () => ({ left: 100, top: 50 }) };
   const tree = Object.create(TreeCanvas.prototype);
   Object.assign(tree, { canvas, graph, view: { x: 30, y: 20, scale: 2 }, resize() {},
-    callbacks: { action: (hit) => calls.push(hit) } });
+    callbacks: { action: (hit) => {
+      calls.push(hit);
+      if (hit.type === "toggle") {
+        if (expanded.has(hit.id)) expanded.delete(hit.id);
+        else expanded.add(hit.id);
+        tree.graph = layout(root, records, expanded);
+      }
+    } } });
   tree.bind();
   assert.ok(listeners.has("dblclick"), "missing title double-click handler");
   const c = graph.cards[0];
   const click = (x, y) => listeners.get("dblclick")({
     clientX: 130 + x * 2, clientY: 70 + y * 2, preventDefault() {} });
   click(c.x + 70, c.y + 15);
-  assert.deepEqual(calls, [{ type: "expand", id: "1", levels: 1 }]);
+  assert.deepEqual(calls, [{ type: "toggle", id: "1" }]);
+  assert.equal(tree.graph.cards[0].open, false, "expanded node should collapse");
+  assert.equal(tree.graph.cards[0].rows.length, 0);
+  click(c.x + 70, c.y + 15);
+  assert.equal(tree.graph.cards[0].open, true, "collapsed node should expand");
+  assert.equal(tree.graph.cards[0].rows.length, 1);
   click(c.x + 10, c.y + 15);
   click(c.x + 70, c.y + 50);
   click(-100, -100);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
 });
 
 test("expansion opens exactly X levels beneath the target and preserves other branches", async () => {

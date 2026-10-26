@@ -213,3 +213,42 @@ func TestJSONToYAMLConversionWorkflow(t *testing.T) {
 		t.Fatal("undo did not restore JSON download")
 	}
 }
+
+func TestSourceMapRevisionAndIsolation(t *testing.T) {
+	h := New()
+	cookie := request(t, h, "GET", "/", "", nil).Result().Cookies()[0]
+	if w := request(t, h, "GET", "/api/source-map?revision=0", "", cookie); w.Code == 200 {
+		t.Fatal("empty session has a map")
+	}
+	body := `{"format":"json","text":"{\"nested\":{\"value\":123}}","revision":0}`
+	if w := request(t, h, "POST", "/api/import", body, cookie); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	w := request(t, h, "GET", "/api/source-map?revision=1", "", cookie)
+	var mapping struct {
+		Revision int
+		Ranges   []struct {
+			ID, Parent        string
+			Index, Start, End int
+		}
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &mapping); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != 200 || mapping.Revision != 1 || len(mapping.Ranges) != 3 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	leaf := mapping.Ranges[2]
+	if leaf.ID != "3" || leaf.Parent != "2" || leaf.Index != 0 || leaf.Start != 11 || leaf.End != 22 {
+		t.Fatalf("leaf map: %+v", leaf)
+	}
+	if w := request(t, h, "GET", "/api/source-map?revision=0", "", cookie); w.Code != 409 {
+		t.Fatal("accepted stale source map", w.Code)
+	}
+	if w := request(t, h, "GET", "/api/source-map?revision=1", "", nil); w.Code == 200 {
+		t.Fatal("source map leaked across sessions")
+	}
+	if w := request(t, h, "GET", "/assets/source-editor.js", "", nil); w.Code != 200 {
+		t.Fatal("missing source editor asset")
+	}
+}

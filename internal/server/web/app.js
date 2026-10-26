@@ -1,3 +1,4 @@
+import { SourceEditor, normalizedSource, nodeAt, revealPath } from "./source-editor.js";
 import { setupInspectorFolding } from "./folding.js";
 import { TreeCanvas, expandLevels } from "./tree.js";
 import { NodeContextMenu, menuTarget, runNodeAction } from "./context-menu.js";
@@ -15,6 +16,7 @@ let state = { revision: 0 },
   conversion = null;
 let records = new Map(),
   expanded = new Set();
+let sourceRanges = [], sourceByID = new Map(), sourceSync = 0;
 function status(message, error = false) {
   $("status").textContent = message;
   $("status").classList.toggle("error", error);
@@ -72,9 +74,11 @@ function ingest(n) {
   }
 }
 async function page(id, offset = 0) {
+  const revision = state.revision;
   const n = await api(
     `/api/tree?node=${encodeURIComponent(id)}&offset=${offset}&limit=20&revision=${state.revision}`,
   );
+  if (revision !== state.revision) throw new Error("Selection changed while loading the tree.");
   ingest(n);
   return n;
 }
@@ -103,9 +107,13 @@ function updateControls() {
   $("working-tab").setAttribute("aria-pressed", String(!showOriginal));
   $("original-tab").setAttribute("aria-pressed", String(showOriginal));
   source.readOnly = showOriginal || busy;
+  sourceEditor.refresh();
 }
 async function install(next, { fit = false, imported = false } = {}) {
   nodeMenu.close(false);
+  sourceSync++;
+  sourceRanges = [];
+  sourceByID = new Map();
   state = next;
   sourceDirty = false;
   inspectorDirty = false;
@@ -117,6 +125,9 @@ async function install(next, { fit = false, imported = false } = {}) {
   if (imported) original = await fetch("/api/original").then((r) => r.text());
   updateControls();
   if (state.root) {
+    const mapping = await api(`/api/source-map?revision=${state.revision}`);
+    sourceRanges = mapping.ranges;
+    sourceByID = new Map(sourceRanges.map(range => [range.id, range]));
     const root = await page(state.root);
     expanded.add(root.id);
     // Open the first level of containers, bounded by the first page.
@@ -151,8 +162,12 @@ async function operation(path, data, options = {}) {
     setBusy(false);
   }
 }
-async function select(id, guard = true) {
+async function select(id, guard = true, syncSource = true) {
   if (guard && !canLeaveInspector()) return;
+  if (syncSource) {
+    sourceSync++;
+    if (sourceSynchronized()) sourceEditor.highlight(sourceByID.get(id));
+  }
   selection = id;
   tree.selected = id;
   const node = records.get(id) || tree.graph.cards
@@ -212,7 +227,7 @@ const tree = new TreeCanvas($("canvas"), {
         b.addEventListener("click", () => select(n.id));
         b.addEventListener("dblclick", () => {
           if (["object", "array", "stream"].includes(n.kind))
-            void action({ type: "expand", id: n.id, levels: 1 });
+            void action({ type: "toggle", id: n.id });
         });
         b.addEventListener("contextmenu", (event) => {
           event.preventDefault();
@@ -241,6 +256,30 @@ const tree = new TreeCanvas($("canvas"), {
   },
   action,
   context: openNodeMenu,
+});
+function sourceSynchronized() {
+  return !!state.root && source.value === normalizedSource(state.source || "");
+}
+const sourceEditor = new SourceEditor(source, $("source-lines"), $("source-position"), async (start, end) => {
+  if (busy || !sourceSynchronized()) return;
+  const target = nodeAt(sourceRanges, start, end);
+  if (!target || target.id === selection || !canLeaveInspector()) return;
+  const ticket = ++sourceSync, revision = state.revision;
+  const current = () => ticket === sourceSync && revision === state.revision && sourceSynchronized();
+  try {
+    for (const step of revealPath(sourceByID, target.id)) {
+      const record = records.get(step.id);
+      if (!record?.children || (record.offset || 0) !== step.offset) await page(step.id, step.offset);
+      if (!current()) return;
+      expanded.add(step.id);
+    }
+    if (!current()) return;
+    tree.relayout();
+    await select(target.id, false, false);
+    if (current()) tree.focus(target.id);
+  } catch (error) {
+    if (current()) status(error.message, true);
+  }
 });
 async function action(hit) {
   nodeMenu.close(false);
@@ -278,10 +317,11 @@ async function action(hit) {
   }
 }
 source.addEventListener("input", () => {
+  sourceSync++;
   nodeMenu.close(false);
   if (showOriginal) return;
   workingDraft = source.value;
-  sourceDirty = source.value !== (state.source || "");
+  sourceDirty = source.value !== normalizedSource(state.source || "");
   $("draft-state").textContent = sourceDirty
     ? "Unapplied changes"
     : "No changes";
@@ -328,6 +368,7 @@ $("discard").addEventListener("click", () => {
   status("Source draft discarded.");
 });
 function sourceTab(isOriginal) {
+  sourceSync++;
   if (!showOriginal) workingDraft = source.value;
   showOriginal = isOriginal;
   updateControls();
@@ -337,6 +378,8 @@ function sourceTab(isOriginal) {
       ? "Unapplied changes"
       : "No changes";
   }
+  sourceEditor.refresh();
+  if (sourceSynchronized()) sourceEditor.highlight(sourceByID.get(selection));
 }
 $("working-tab").addEventListener("click", () => sourceTab(false));
 $("original-tab").addEventListener("click", () => sourceTab(true));

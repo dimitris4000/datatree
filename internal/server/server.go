@@ -104,6 +104,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.Write(d.Original)
 			return
+		case "/api/source-map":
+			if d.Doc == nil {
+				fail(w, errors.New("open a file first"))
+				return
+			}
+			if err := checkQueryRevision(r, d); err != nil {
+				fail(w, err)
+				return
+			}
+			writeJSON(w, map[string]any{"revision": d.Revision, "ranges": d.Doc.SourceRanges()})
+			return
 		case "/api/tree":
 			if d.Doc == nil {
 				fail(w, errors.New("open a file first"))

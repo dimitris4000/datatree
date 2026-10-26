@@ -683,3 +683,46 @@ dialog pre {
   text-align: center;
 }
 .fold-hint { color: var(--muted); padding-right: 8px; }
+
+.source-editor {
+  --gutter-width: 24px;
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #fcfdf9;
+}
+.source-gutter {
+  flex: 0 0 var(--gutter-width);
+  width: var(--gutter-width);
+  overflow: hidden;
+  padding-right: 7px;
+  border-right: 1px solid var(--line);
+  background: #f2f5ee;
+  color: var(--muted);
+  font: 11px/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-align: right;
+  user-select: none;
+  pointer-events: none;
+}
+.source-line.active { color: var(--green); font-weight: 700; background: #dce8da; }
+.source-position { padding: 5px 12px; color: var(--muted); font-size: 10px; border-top: 1px solid var(--line); }
+.source-editor #source { width: 0; padding-left: 10px; position: relative; z-index: 1; background: transparent; }
+#source::selection { background: #bdd7bd; color: #203e2e; }
+
+.source-selection { position: absolute; left: var(--gutter-width); top: 0; bottom: 0; overflow: hidden; pointer-events: none; }
+.source-selection-text {
+  margin: 0;
+  padding: 18px 10px;
+  max-height: none;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: transparent;
+  white-space: pre;
+  overflow-wrap: normal;
+  font: 11px/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.source-selection-text mark { background: #dce8da; color: transparent; }

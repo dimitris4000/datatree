@@ -208,7 +208,7 @@ export class TreeCanvas {
       if (hit?.type !== "select" || !card || !collection(card) || p.y >= card.y + 36)
         return;
       e.preventDefault();
-      this.callbacks.action({ type: "expand", id: card.id, levels: 1 });
+      this.callbacks.action({ type: "toggle", id: card.id });
     });
     c.addEventListener("contextmenu", (e) => {
       const box = c.getBoundingClientRect();

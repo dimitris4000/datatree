@@ -71,12 +71,17 @@
             <option value="csv">CSV</option></select
           ><span id="draft-state">No changes</span>
         </div>
-        <textarea
-          id="source"
-          aria-label="Document source"
-          spellcheck="false"
-          placeholder="Paste your data here, or open a file…"
-        ></textarea>
+        <div class="source-editor">
+          <div id="source-lines" class="source-gutter" aria-hidden="true"></div>
+          <textarea
+            wrap="off"
+            id="source"
+            aria-label="Document source"
+            spellcheck="false"
+            placeholder="Paste your data here, or open a file…"
+          ></textarea>
+        </div>
+        <div id="source-position" class="source-position" aria-live="off">Ln 1, Col 1</div>
         <div class="pane-footer">
           <button id="discard">Discard draft</button
           ><button id="apply" class="primary">Apply source</button>
@@ -122,7 +127,7 @@
             </span>
           </div>
           <div class="canvas-hint">
-            Drag to pan · Scroll to zoom · Double-click title to expand · Right-click for actions
+            Drag to pan · Scroll to zoom · Double-click title to expand/collapse · Right-click for actions
           </div>
         </div>
         <details class="accessible-tree">

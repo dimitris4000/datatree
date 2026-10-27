@@ -689,8 +689,17 @@ dialog pre {
 }
 .source-selection-text mark { background: #dce8da; color: transparent; }
 
-#open-document { width: min(480px, 90vw); }
+#open-document { width: min(700px, 90vw); }
 #open-document .dialog-heading { margin-bottom: 18px; }
+.file-browser-navigation .button-row { display: flex; gap: 8px; margin-top: 6px; }
+#file-browser-path { flex: 1; min-width: 0; }
+.file-browser-hidden { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+#file-browser-list { list-style: none; padding: 0; margin: 0; max-height: 38vh; min-height: 100px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+.browser-entry { display: block; width: 100%; text-align: left; border: 0; border-radius: 0; padding: 9px 12px; overflow-wrap: anywhere; }
+.browser-directory { font-weight: 600; }
+.browser-directory::before { content: "▸ "; }
+.browser-entry[aria-pressed="true"] { background: #dce8da; }
+#file-browser-status, #file-open-error { overflow-wrap: anywhere; }
 .toolbar-actions button { white-space: nowrap; }
 
 .find-panel {

@@ -1,5 +1,5 @@
 import { mountDiffPanel } from "./diff.js";
-import { readFileImport, selectUploadDocument, isDocumentFile } from "./file-import.js";
+import { mountFileBrowser } from "./file-browser.js";
 import { mountConversionDialog, downloadConvertedCopy } from "./conversion.js";
 import { mountValidationPanel, canValidateDocument } from "./validation.js";
 import { revealResult, mountFindPanel } from "./find.js";
@@ -63,7 +63,7 @@ function setBusy(value) {
   $("expand-selected").disabled = value;
   source.readOnly = value || showOriginal;
   document
-    .querySelectorAll(".toolbar-actions button,#apply,#file,#example")
+    .querySelectorAll(".toolbar-actions button,#apply,#example")
     .forEach((b) => (b.disabled = value));
   if (!value) {
     $("undo").disabled = !state.canUndo;
@@ -464,68 +464,26 @@ function sourceTab(isOriginal) {
 }
 $("working-tab").addEventListener("click", () => sourceTab(false));
 $("original-tab").addEventListener("click", () => sourceTab(true));
+const fileBrowser = mountFileBrowser(document, {
+  revision: () => state.revision,
+  browse: payload => api('/api/files', payload),
+  ready: () => ready() && canLeaveInspector(),
+  open: async payload => {
+    setBusy(true);
+    try {
+      await install(await api('/api/open', payload), { fit: true, imported: true });
+      status(state.schema ? `File opened. Attached ${state.schema.filename}; press Validate to check it.` : 'File opened.');
+      return true;
+    } finally { setBusy(false); }
+  },
+});
 $("open-file").addEventListener("click", () => {
   if (!ready() || !canLeaveInspector()) return;
   $("file-open-error").hidden = true;
   $("open-document").showModal();
+  void fileBrowser.show();
 });
 $("close-open-document").addEventListener("click", () => $("open-document").close());
-$("local-file-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const path = $("local-path").value.trim();
-  if (!path) return;
-  $("open-document").close();
-  await operation("/api/open", { path }, { fit: true, imported: true });
-});
-let uploadGeneration = 0;
-async function uploadFile(file, files) {
-  const generation = ++uploadGeneration, revision = state.revision;
-  try {
-    const payload = await readFileImport(file, files);
-    if (generation !== uploadGeneration) return;
-    if (revision !== state.revision) throw new Error('Document changed while reading files; open the file again.');
-    $("open-document").close();
-    await operation('/api/import', { ...payload, revision }, { fit: true, imported: true });
-  } catch (err) {
-    if (generation !== uploadGeneration) return;
-    status(err.message, true);
-    $("file-open-error").textContent = err.message;
-    $("file-open-error").hidden = false;
-  }
-}
-$("file").addEventListener("change", async (e) => {
-  const files = Array.from(e.target.files);
-  if (!files.length) return;
-  try {
-    await uploadFile(selectUploadDocument(files), files);
-  } catch (err) {
-    status(err.message, true);
-    $("file-open-error").textContent = err.message;
-    $("file-open-error").hidden = false;
-  } finally {
-    e.target.value = "";
-  }
-});
-let folderFiles = [];
-$("folder-files").addEventListener('change', e => {
-  folderFiles = Array.from(e.target.files);
-  const select = $("folder-document");
-  select.replaceChildren();
-  for (const [index, file] of folderFiles.entries()) {
-    if (!isDocumentFile(file)) continue;
-    const option = document.createElement('option');
-    option.value = String(index);
-    option.textContent = file.webkitRelativePath || file.name;
-    select.append(option);
-  }
-  $("folder-selection").hidden = !select.options.length;
-  $("file-open-error").hidden = !!select.options.length;
-  if (!select.options.length) $("file-open-error").textContent = 'No supported documents found in this folder.';
-});
-$("open-folder-document").addEventListener('click', async () => {
-  const file = folderFiles[Number($("folder-document").value)];
-  if (file) await uploadFile(file, folderFiles);
-});
 $("example").addEventListener("click", async () => {
   await operation(
     "/api/import",

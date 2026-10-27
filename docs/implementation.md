@@ -1,10 +1,16 @@
 # Data Tree implementation record
 
+## Server file picker
+
+The working-document dialog now uses a custom directory browser instead of the browser's upload input. POST `/api/files` lists supported files and navigable directories using the CLI process’s filesystem access. It requires a revision and the existing loopback/same-Origin checks, reads outside the global session lock and rechecks the revision before responding. The initial directory is the current local document’s parent or the process working directory. Hidden entries are optional; symlinked directories are navigable. Enumeration examines at most 10,000 entries and returns at most 1,000 matches, with explicit truncation. Browsing never changes document state.
+
+The dialog renders names as text, supports typed directories, Up, selected-path editing, double-click opening and hidden files. It rejects stale responses, serializes opens, respects source/subtree draft guards and retains errors in the dialog. Selection uses `/api/open`, preserving companion discovery, Git provenance and conversion-save identity. The native working-document upload input and its unused client helper were removed; the import API remains available for examples and programmatic clients.
+
 ## Companion schema discovery
 
 Local opens, including CLI startup, check the selected path with its final extension replaced by `.schema.json`. Discovery uses the user-selected path before resolving a file symlink; the existing resolved file path remains the document's Git/save identity. Missing companions are optional, while existing unreadable/nonregular/oversized/invalid schemas reject the complete open. Parsing/compilation finish before committing document, attachment and schema generation. New startup sessions share immutable compiled schema data with independent attachment lifecycle; successful opens without a companion clear old attachments.
 
-Browser file selection can include one document and its matching sidecar. Folder selection enumerates granted files and pairs only siblings in the selected document directory. `/api/import` receives both in one request, checks schema naming and compiles before committing either. It never searches the server working directory for an uploaded filename. File reads preserve their captured revision and suppress superseded selections. Attachment remains separate from explicit validation. JSONL validation now checks each record independently and retains its source location and record index.
+The open dialog's server file browser and exact-path field both use local-open discovery. Programmatic `/api/import` requests can still provide a document and matching sidecar in one request; the API checks schema naming and compiles before committing either. It never searches the server working directory for an uploaded filename. Attachment remains separate from explicit validation. JSONL validation checks each record independently and retains its source location and record index.
 
 ## Saving converted copies
 

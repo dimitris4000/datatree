@@ -109,6 +109,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.static.ServeHTTP(w, r2)
 		return
 	}
+	if r.URL.Path == "/api/files" {
+		s.fileBrowserRequest(w, r)
+		return
+	}
 	if r.URL.Path == "/api/schema" || r.URL.Path == "/api/schema-clear" || r.URL.Path == "/api/validate" {
 		s.schemaRequest(w, r)
 		return

@@ -266,10 +266,10 @@ func TestDocumentShellHasOneFileOpeningEntry(t *testing.T) {
 	html := request(t, New(), "GET", "/", "", nil).Body.String()
 	toolbar := regexp.MustCompile(`(?s)<nav class="toolbar".*?</nav>`).FindString(html)
 	if !strings.Contains(toolbar, `id="open-file"`) || strings.Contains(toolbar, `type="file"`) || strings.Contains(toolbar, `id="open-path"`) {
-		t.Fatal("toolbar must have one file-opening button, with upload and path options in a dialog")
+		t.Fatal("toolbar must have one file-opening button, with server browsing and path options in a dialog")
 	}
 	dialog := regexp.MustCompile(`(?s)<dialog id="open-document".*?</dialog>`).FindString(html)
-	for _, id := range []string{`id="file"`, `id="local-file-form"`, `id="local-path"`} {
+	for _, id := range []string{`id="file-browser-form"`, `id="file-browser-path"`, `id="file-browser-list"`, `id="local-file-form"`, `id="local-path"`} {
 		if !strings.Contains(dialog, id) {
 			t.Fatalf("open dialog missing %s", id)
 		}

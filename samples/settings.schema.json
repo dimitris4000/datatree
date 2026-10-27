@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Editor configuration",
+  "description": "Validate the parsed YAML document against this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["application", "server", "features", "allowed_extensions", "welcome_message", "optional_label"],
+  "properties": {
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "enabled"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port", "timeout_seconds"],
+      "properties": {
+        "host": { "type": "string", "minLength": 1 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "timeout_seconds": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "enabled"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "enabled": { "type": "boolean" }
+        }
+      }
+    },
+    "allowed_extensions": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+    "welcome_message": { "type": "string" },
+    "optional_label": { "type": ["string", "null"] }
+  }
+}

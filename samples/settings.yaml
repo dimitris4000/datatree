@@ -1,0 +1,19 @@
+# Sample editor configuration with nested objects and multiple scalar types.
+application:
+  name: "Sample editor"
+  version: "1.2.0"
+  enabled: true
+server:
+  host: "127.0.0.1"
+  port: 8080
+  timeout_seconds: 2.5
+features:
+  - name: "autosave"
+    enabled: true
+  - name: "preview"
+    enabled: false
+allowed_extensions: ["json", "jsonl", "yaml", "csv"]
+welcome_message: |
+  Welcome to the editor.
+  Try editing a nested value or adding a list item.
+optional_label: null

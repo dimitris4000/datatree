@@ -1,0 +1,5 @@
+sku,name,category,price,stock,active,notes
+P001,Notebook,Stationery,4.50,120,true,Recycled paper
+P002,"Pen, blue",Stationery,1.25,0,false,"Pack of 10, medium tip"
+P003,Café mug,Kitchen,12.00,35,true,"Label says ""Handle with care"""
+P004,Gift card,Gifts,25.00,8,true,

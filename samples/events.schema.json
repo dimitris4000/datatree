@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Event record",
+  "description": "Validate each nonempty line of events.jsonl independently against this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "timestamp", "level", "message", "duration_ms", "context"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^evt-[0-9]{3}$" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "level": { "enum": ["info", "warning", "error"] },
+    "message": { "type": "string", "minLength": 1 },
+    "duration_ms": { "type": "number", "minimum": 0 },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "saved"],
+      "properties": {
+        "file": { "type": "string", "minLength": 1 },
+        "saved": { "type": "boolean" }
+      }
+    }
+  }
+}

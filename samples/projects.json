@@ -1,0 +1,24 @@
+{
+  "workspace": "Editor test workspace",
+  "archived": false,
+  "projects": [
+    {
+      "id": 101,
+      "name": "Website refresh",
+      "status": "active",
+      "budget": 1250.5,
+      "tags": ["design", "web"],
+      "owner": { "name": "Alex Rivera", "email": "alex@example.com" },
+      "notes": "Review the \"home\" page.\nCheck mobile layout."
+    },
+    {
+      "id": 102,
+      "name": "Café inventory",
+      "status": "planned",
+      "budget": 0,
+      "tags": [],
+      "owner": { "name": "Maria Silva", "email": "maria@example.com" },
+      "notes": null
+    }
+  ]
+}

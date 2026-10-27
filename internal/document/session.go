@@ -10,10 +10,11 @@ type snapshot struct {
 	source []byte
 }
 type Session struct {
-	Doc        *Document
-	Original   []byte
-	Revision   int
-	undo, redo []snapshot
+	Doc            *Document
+	Original       []byte
+	OriginalFormat string
+	Revision       int
+	undo, redo     []snapshot
 }
 
 func NewSession() *Session { return &Session{} }
@@ -33,6 +34,7 @@ func (s *Session) Import(format string, source []byte, revision int) error {
 	}
 	s.Doc = d
 	s.Original = bytes.Clone(source)
+	s.OriginalFormat = d.Format
 	s.undo = nil
 	s.redo = nil
 	s.Revision++
@@ -143,3 +145,19 @@ func (s *Session) History(direction string, rev int) error {
 }
 func (s *Session) CanUndo() bool { return len(s.undo) > 0 }
 func (s *Session) CanRedo() bool { return len(s.redo) > 0 }
+
+// RevertDiff commits one validated inverse and leaves the comparison baseline alone.
+func (s *Session) RevertDiff(base *Document, index, revision int) error {
+	if err := s.check(revision); err != nil {
+		return err
+	}
+	if s.Doc == nil {
+		return errors.New("open a file first")
+	}
+	next, err := s.Doc.RevertDiff(base, index)
+	if err != nil {
+		return err
+	}
+	s.commit(next)
+	return nil
+}

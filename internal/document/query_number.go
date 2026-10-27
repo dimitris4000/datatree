@@ -47,7 +47,7 @@ func decimalNumber(s string) (queryDecimal, bool) {
 	v.digits = strings.TrimRight(s, "0")
 	return v, true
 }
-func compareQueryNumbers(n *Node, literal string) (int, bool) {
+func queryNumberText(n *Node) (string, bool) {
 	value := n.Value
 	// YAML supports bases, separators, leading pluses and decimal forms JSON omits.
 	if !queryNumber.MatchString(value) {
@@ -55,7 +55,7 @@ func compareQueryNumbers(n *Node, literal string) (int, bool) {
 		if n.raw.Tag == "!!int" {
 			z, ok := new(big.Int).SetString(value, 0)
 			if !ok {
-				return 0, false
+				return "", false
 			}
 			value = z.String()
 		} else {
@@ -79,6 +79,14 @@ func compareQueryNumbers(n *Node, literal string) (int, bool) {
 			value = prefix + mantissa + exp
 		}
 	}
+	return value, true
+}
+func compareQueryNumbers(n *Node, literal string) (int, bool) {
+	value, ok := queryNumberText(n)
+	if !ok {
+		return 0, false
+	}
+
 	a, ok := decimalNumber(value)
 	if !ok {
 		return 0, false

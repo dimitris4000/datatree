@@ -73,6 +73,28 @@ Results appear in document order, once per node. Select a result or use **Previo
 
 Search and query text are limited to 4,096 UTF-8 bytes. Results are capped at 200 with a notice when more matches exist. Queries also have a 256-step limit and a work budget; numeric filter operands are limited to 4,096 bytes each. Narrow a query if a limit is reached. Results clear when the document changes or the search controls change. Finding and navigating never modify the document or its undo history.
 
+### Structural diff
+
+Choose **Changes** above the tree to compare the applied working document with its **Original** import. **Choose comparison file** loads a separate JSON, JSONL, YAML or CSV baseline without replacing your working document. The baseline selector switches between Original and the retained comparison file; the filename and format appear below the controls. Failed replacements retain the previous baseline and results.
+
+The panel shows added, removed and changed counts plus selectable **Before** and **After** previews. Drag to select and copy either value; preview text sits outside the action buttons. Choose an entry’s heading button or use **Previous change** / **Next change** to reveal the current node, including collapsed branches and other pages. Removed entries show their baseline path or source location and navigate to the nearest surviving parent. Green **Added** and amber **Changed** labels mark current tree nodes; blue **Contains changes** labels identify ancestors, including parents of removed nodes. The keyboard node list includes the same status labels. Closing Changes hides the indicators.
+
+Comparison follows these rules:
+
+- Match mappings by typed key identity and arrays or YAML stream documents by index. Reordering mapping keys produces no changes. Inserting an array item can show changes at subsequent indexes; moves are not detected.
+- Ignore whitespace, comments, quoting styles and anchor names. Compare scalar types and values, retaining exact finite-number equality across JSON/YAML numeric spellings. Nonfinite YAML numbers compare by normalized special value. Custom tags remain meaningful.
+- Treat an added or removed collection as one change; added descendants also receive tree indicators. A type change is one changed entry. Renaming a key produces an addition and a removal.
+- Compare complex YAML keys structurally. Mapping key types remain distinct, including integer versus float tags. Ambiguous equivalent keys produce an explicit comparison error rather than silently matching the wrong entry.
+- Compare aliases by their target’s structural location without expanding them, including cycles. An edit to the target is reported at the target itself; retargeting a reference changes the reference. JSON/YAML comparisons do not expand aliases or resolve merge keys.
+
+Changes refresh after accepted edits, format conversion and undo/redo while the panel is open. Comparing uses the last applied document; navigating and reverting require source drafts to be applied or discarded and retain the existing subtree-draft confirmation. Computing a diff does not alter the working source, revision, undo history or files on disk.
+
+Each entry has **Revert**: remove an added entry, restore a removed entry, or replace a changed value with its baseline value. Revert uses the complete baseline node, including nested content, rather than the truncated preview. Each successful action creates one working revision, supports Undo/Redo, retains the selected baseline and refreshes Changes. The current file format remains in use; Download saves the result as a copy.
+
+Reverts validate the document revision and comparison-file identity before applying. Rejected actions leave the working document unchanged. Restore earlier missing array positions before later ones. YAML reference targets must remain valid: revert dependent references first if removing an anchor would leave them dangling. Values that cannot be represented in the current format are rejected. YAML changes patch the affected value or containing collection; reference/anchor updates can require a wider source patch.
+
+The displayed list is limited to 200 changes, with an explicit notice when truncated; counts and tree indicators cover the complete comparison. Traversal, key identities, ancestor marking and scalar processing share a bounded work budget. Numeric operands are limited to 4,096 bytes each; a work/size failure returns an error rather than an incomplete diff. Comparison files use the same 10 MiB, node and depth limits as working files. One extra baseline is retained per in-memory session, survives working edits, and resets when a new working document opens. It follows normal session expiry/eviction and is not part of Undo/Redo.
+
 ### YAML preservation
 
 Working YAML is stored as original bytes plus validated local patches. Value edits replace that value's source span; structural edits may rewrite the containing collection. **Bytes outside that span stay identical**, including line endings. Unchanged subtree applies preserve the entire source. Metadata on unaffected nodes is retained. Structural serialization can change spacing within the patched collection.

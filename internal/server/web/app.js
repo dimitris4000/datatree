@@ -1,7 +1,8 @@
+import { mountDiffPanel } from "./diff.js";
 import { revealResult, mountFindPanel } from "./find.js";
 import { SourceEditor, normalizedSource, nodeAt, revealPath } from "./source-editor.js";
 import { setupInspectorFolding } from "./folding.js";
-import { TreeCanvas, expandLevels, collapseAll } from "./tree.js";
+import { TreeCanvas, expandLevels, collapseAll, diffBadge } from "./tree.js";
 import { NodeContextMenu, menuTarget, runNodeAction } from "./context-menu.js";
 const $ = (id) => document.getElementById(id);
 const source = $("source"),
@@ -46,7 +47,7 @@ async function api(path, data) {
       : {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...data, revision: state.revision }),
+          body: JSON.stringify({ revision: state.revision, ...data }),
         };
   const r = await fetch(path, options);
   const result = await r.json();
@@ -121,6 +122,7 @@ function updateControls() {
 async function install(next, { fit = false, imported = false } = {}) {
   nodeMenu.close(false);
   findPanel.controller.clear();
+  diffPanel.controller.invalidateDocument(imported);
   sourceSync++;
   sourceRanges = [];
   sourceByID = new Map();
@@ -154,6 +156,7 @@ async function install(next, { fit = false, imported = false } = {}) {
     tree.install(root, records, expanded);
     if (fit) tree.fit();
     await select(root.id, false);
+    if (diffPanel.controller.visible) await diffPanel.controller.refresh();
   }
 }
 async function operation(path, data, options = {}) {
@@ -233,7 +236,8 @@ const tree = new TreeCanvas($("canvas"), {
     for (const c of graph.cards) {
       for (const n of [c, ...c.rows]) {
         const b = document.createElement("button");
-        b.textContent = `${"· ".repeat(c.depth)}${n.label} (${n.kind})`;
+        const badge = diffBadge(tree.diffMarks?.[n.id]);
+        b.textContent = `${"· ".repeat(c.depth)}${badge ? badge.label + " · " : ""}${n.label} (${n.kind})`;
         b.addEventListener("click", () => select(n.id));
         b.addEventListener("dblclick", () => {
           if (["object", "array", "stream"].includes(n.kind))
@@ -300,27 +304,49 @@ const findPanel = mountFindPanel(document, {
     const query = new URLSearchParams({ ...options, revision });
     return api(`/api/find?${query}`);
   },
-  navigate: async (id) => {
+  navigate: navigateNode,
+});
+const diffPanel = mountDiffPanel(document, {
+  revision: () => state.revision,
+  invalidate: () => { sourceSync++; },
+  load: (baseline, revision) => api(`/api/diff?${new URLSearchParams({ baseline, revision })}`),
+  upload: (payload, revision) => api("/api/diff-baseline", { ...payload, revision }),
+  navigate: navigateNode,
+  revert: async (payload, revision) => {
     if (!ready() || !canLeaveInspector()) return false;
-    const ticket = ++sourceSync, revision = state.revision;
-    const current = () => ticket === sourceSync && revision === state.revision && !sourceDirty;
+    if (revision !== state.revision) throw new Error("Document changed; refresh Changes before reverting.");
     setBusy(true);
     try {
-      const revealed = await revealResult(id, {
-        ranges: sourceByID, records, expanded, load: page, current,
-        relayout: (priority) => { tree.relayout(priority); return tree.graph; },
-      });
-      if (!revealed) return false;
-      if (sourceSynchronized()) sourceEditor.highlight(sourceByID.get(id));
-      await select(id, false, false);
-      if (!current()) return false;
-      tree.focus(id);
+      const next = await api("/api/diff-revert", { ...payload, revision });
+      await install(next);
+      status("Change reverted. Undo restores it; download to save a copy.");
       return true;
     } finally {
       setBusy(false);
     }
   },
+  highlight: (marks) => tree.setDiffMarks(marks),
 });
+async function navigateNode(id) {
+  if (!ready() || !canLeaveInspector()) return false;
+  const ticket = ++sourceSync, revision = state.revision;
+  const current = () => ticket === sourceSync && revision === state.revision && !sourceDirty;
+  setBusy(true);
+  try {
+    const revealed = await revealResult(id, {
+      ranges: sourceByID, records, expanded, load: page, current,
+      relayout: (priority) => { tree.relayout(priority); return tree.graph; },
+    });
+    if (!revealed) return false;
+    if (sourceSynchronized()) sourceEditor.highlight(sourceByID.get(id));
+    await select(id, false, false);
+    if (!current()) return false;
+    tree.focus(id);
+    return true;
+  } finally {
+    setBusy(false);
+  }
+}
 async function action(hit) {
   nodeMenu.close(false);
   try {

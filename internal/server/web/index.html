@@ -80,7 +80,7 @@
       <section id="tree-pane" class="pane">
         <div class="pane-heading">
           <h1>Tree view</h1>
-          <span class="eyebrow">LEFT → RIGHT</span>
+          <button id="diff-toggle" type="button" aria-expanded="false" aria-controls="diff-panel">Changes</button>
         </div>
         <section class="find-panel" aria-label="Find nodes">
           <form id="find-form" class="find-form">
@@ -104,6 +104,26 @@
             <button id="find-next" type="button" disabled>Next</button>
           </div>
           <ol id="find-results" class="find-results" aria-label="Find results" hidden></ol>
+        </section>
+        <section id="diff-panel" class="diff-panel" aria-label="Structural changes" hidden>
+          <div class="diff-controls">
+            <select id="diff-baseline" aria-label="Comparison baseline">
+              <option value="original">Original</option>
+              <option value="file">Compare file</option>
+            </select>
+            <label class="diff-file-label" for="diff-file">Choose comparison file
+              <input id="diff-file" type="file" accept=".json,.jsonl,.ndjson,.yaml,.yml,.csv" />
+            </label>
+            <button id="diff-refresh" type="button">Refresh</button>
+          </div>
+          <p id="diff-filename" class="find-help">Original import</p>
+          <div id="diff-counts" class="diff-counts" aria-live="polite"></div>
+          <div class="diff-navigation">
+            <button id="diff-previous" type="button" disabled>Previous change</button>
+            <button id="diff-next" type="button" disabled>Next change</button>
+          </div>
+          <p id="diff-status" class="find-help" role="status" aria-live="polite"></p>
+          <ol id="diff-results" class="find-results" aria-label="Structural changes"></ol>
         </section>
         <div
           id="canvas-wrap"

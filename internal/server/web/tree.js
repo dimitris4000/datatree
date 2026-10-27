@@ -1,6 +1,12 @@
 const collection = (n) => ["object", "array", "stream"].includes(n.kind);
 const short = (s, n = 44) =>
   String(s).length > n ? String(s).slice(0, n - 1) + "…" : String(s);
+export function diffBadge(mark) {
+  if (mark?.added) return { label: "+ Added", background: "#e1f2e4", color: "#28603a" };
+  if (mark?.changed) return { label: "~ Changed", background: "#fff0d2", color: "#875417" };
+  if (mark?.contains) return { label: "Contains changes", background: "#e8edf8", color: "#485d89" };
+  return null;
+}
 export function collapseAll(id, ranges, expanded) {
   if (id == null) {
     expanded.clear();
@@ -323,6 +329,11 @@ export class TreeCanvas {
       this.draw();
     }
   }
+  setDiffMarks(marks) {
+    this.diffMarks = marks;
+    this.draw();
+    this.callbacks.layout?.(this.graph);
+  }
   draw() {
     if (!this.canvas) return;
     const ctx = this.canvas.getContext("2d");
@@ -392,20 +403,27 @@ export class TreeCanvas {
       ctx.save();
       rounded(ctx, c.x, c.y, c.w, c.h);
       ctx.clip();
-      ctx.fillStyle = "#f0f4ec";
+      const badge = diffBadge(this.diffMarks?.[c.id]);
+      const titleY = c.y + (badge ? 17 : 22);
+      ctx.fillStyle = badge?.background || "#f0f4ec";
       ctx.fillRect(c.x, c.y, c.w, 35);
+      if (badge) {
+        ctx.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
+        ctx.fillStyle = badge.color;
+        ctx.fillText(badge.label, c.x + 31, c.y + 32);
+      }
       ctx.fillStyle = "#839479";
       ctx.fillText(
         collection(c) ? (c.open ? "▾" : "▸") : "·",
         c.x + 11,
-        c.y + 22,
+        titleY,
       );
       ctx.fillStyle = "#b67943";
       ctx.font = "bold 12px ui-monospace, SFMono-Regular, Menlo, monospace";
       ctx.fillText(
         short(c.label, Math.max(8, Math.floor((c.w - 85) / 7))),
         c.x + 31,
-        c.y + 22,
+        titleY,
       );
       ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, monospace";
       ctx.fillStyle = "#7f8e7c";
@@ -413,17 +431,22 @@ export class TreeCanvas {
       ctx.fillText(
         count,
         c.x + c.w - ctx.measureText(count).width - 13,
-        c.y + 22,
+        titleY,
       );
       c.rows.forEach((r, i) => {
         const top = c.y + 40 + i * 23;
+        const rowBadge = diffBadge(this.diffMarks?.[r.id]);
+        if (rowBadge) {
+          ctx.fillStyle = rowBadge.background;
+          ctx.fillRect(c.x + 1, top, c.w - 2, 23);
+        }
         if (this.selected === r.id) {
           ctx.fillStyle = "#e9f1df";
           ctx.fillRect(c.x + 1, top, c.w - 2, 23);
         }
         ctx.font = "bold 11px ui-monospace, SFMono-Regular, Menlo, monospace";
-        const key = short(r.label, 22) + ": ";
-        ctx.fillStyle = "#8a639c";
+        const key = (rowBadge ? rowBadge.label + " · " : "") + short(r.label, rowBadge ? 12 : 22) + ": ";
+        ctx.fillStyle = rowBadge?.color || "#8a639c";
         ctx.fillText(key, c.x + 13, top + 15);
         const kw = ctx.measureText(key).width;
         ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";

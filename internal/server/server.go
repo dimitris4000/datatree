@@ -26,10 +26,12 @@ import (
 var assets embed.FS
 
 type browserSession struct {
-	data     *document.Session
-	filename string
-	path     string
-	touched  time.Time
+	data               *document.Session
+	filename           string
+	path               string
+	comparison         *document.Document
+	comparisonFilename string
+	touched            time.Time
 }
 type Server struct {
 	mu        sync.Mutex
@@ -106,6 +108,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.Write(d.Original)
 			return
+		case "/api/diff":
+			session.diff(w, r)
+			return
 		case "/api/find":
 			s.find(w, r, d)
 			return
@@ -171,10 +176,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		document.Action
-		Revision  int    `json:"revision"`
-		Direction string `json:"direction"`
-		Path      string `json:"path"`
-		Filename  string `json:"filename"`
+		Revision      int    `json:"revision"`
+		Direction     string `json:"direction"`
+		Path          string `json:"path"`
+		Filename      string `json:"filename"`
+		Baseline      string `json:"baseline"`
+		BaselineToken string `json:"baselineToken"`
+		ChangeIndex   *int   `json:"changeIndex"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, document.MaxBytes*6+4096)
 	if r.URL.Path == "/actions/edit" {
@@ -230,6 +238,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case "/api/open":
 		err = session.openLocal(in.Path, in.Revision)
+	case "/api/diff-revert":
+		if in.ChangeIndex == nil {
+			err = errors.New("choose a change to revert")
+		} else {
+			err = session.revertDiff(in.Baseline, in.BaselineToken, *in.ChangeIndex, in.Revision)
+		}
+	case "/api/diff-baseline":
+		session.replaceDiffBaseline(w, in.Format, in.Text, in.Filename, in.Revision)
+		return
 	case "/api/apply":
 		err = d.Apply(in.Format, []byte(in.Text), in.Revision)
 	case "/api/edit", "/actions/edit":
@@ -256,6 +273,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 		return
+	}
+	if err == nil && (r.URL.Path == "/api/import" || r.URL.Path == "/api/open") {
+		session.comparison = nil
+		session.comparisonFilename = ""
 	}
 	if r.URL.Path == "/actions/edit" {
 		if err != nil {

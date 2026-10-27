@@ -1,8 +1,10 @@
 import { mountDiffPanel } from "./diff.js";
+import { mountConversionDialog, downloadConvertedCopy } from "./conversion.js";
+import { mountValidationPanel, canValidateDocument } from "./validation.js";
 import { revealResult, mountFindPanel } from "./find.js";
 import { SourceEditor, normalizedSource, nodeAt, revealPath } from "./source-editor.js";
 import { setupInspectorFolding } from "./folding.js";
-import { TreeCanvas, expandLevels, collapseAll, diffBadge } from "./tree.js";
+import { TreeCanvas, expandLevels, collapseAll, diffBadge, validationBadge } from "./tree.js";
 import { NodeContextMenu, menuTarget, runNodeAction } from "./context-menu.js";
 const $ = (id) => document.getElementById(id);
 const source = $("source"),
@@ -14,8 +16,7 @@ let state = { revision: 0 },
   inspectorDirty = false,
   showOriginal = false,
   busy = false,
-  selection = null,
-  conversion = null;
+  selection = null;
 let records = new Map(),
   expanded = new Set();
 let sourceRanges = [], sourceByID = new Map(), sourceSync = 0;
@@ -127,6 +128,7 @@ async function install(next, { fit = false, imported = false } = {}) {
   sourceRanges = [];
   sourceByID = new Map();
   state = next;
+  validationPanel.controller.install(state.schema);
   sourceDirty = false;
   inspectorDirty = false;
   workingDraft = state.source || "";
@@ -199,6 +201,7 @@ async function select(id, guard = true, syncSource = true) {
       throw new Error("htmx failed to load. Reload this page.");
     }
     inspectorDirty = false;
+    validationPanel.selectionChanged();
   } catch (e) {
     status(e.message, true);
   }
@@ -237,7 +240,8 @@ const tree = new TreeCanvas($("canvas"), {
       for (const n of [c, ...c.rows]) {
         const b = document.createElement("button");
         const badge = diffBadge(tree.diffMarks?.[n.id]);
-        b.textContent = `${"· ".repeat(c.depth)}${badge ? badge.label + " · " : ""}${n.label} (${n.kind})`;
+        const validation = validationBadge(tree.validationMarks?.[n.id]);
+        b.textContent = `${"· ".repeat(c.depth)}${validation ? validation.label + " · " : ""}${badge ? badge.label + " · " : ""}${n.label} (${n.kind})`;
         b.addEventListener("click", () => select(n.id));
         b.addEventListener("dblclick", () => {
           if (["object", "array", "stream"].includes(n.kind))
@@ -326,6 +330,16 @@ const diffPanel = mountDiffPanel(document, {
     }
   },
   highlight: (marks) => tree.setDiffMarks(marks),
+});
+const validationPanel = mountValidationPanel(document, {
+  revision: () => state.revision,
+  available: () => canValidateDocument(state),
+  attach: (payload, revision) => api('/api/schema', { ...payload, revision }),
+  clear: revision => api('/api/schema-clear', { revision }),
+  validate: (revision, schemaToken) => api('/api/validate', { revision, schemaToken }),
+  navigate: navigateNode,
+  selected: () => selection,
+  highlight: marks => tree.setValidationMarks(marks),
 });
 async function navigateNode(id) {
   if (!ready() || !canLeaveInspector()) return false;
@@ -516,27 +530,23 @@ $("download").addEventListener("click", () => {
   a.download = `document.${state.format}`;
   a.click();
 });
+const conversionDialog = mountConversionDialog(document, {
+  revision: () => state.revision,
+  preview: format => api('/api/preview', { format }),
+  convert: payload => api('/api/convert', payload),
+  install,
+  download: (text, filename) => downloadConvertedCopy(document, text, filename),
+  busy: setBusy,
+  status,
+  ready: () => ready() && canLeaveInspector(),
+});
 $("convert").addEventListener("click", async () => {
   if (!ready() || !canLeaveInspector()) return;
   try {
-    conversion = await api("/api/preview", {
-      format: $("conversion-format").value,
-    });
-    $("conversion-preview").textContent = conversion.text;
-    $("conversion").showModal();
+    await conversionDialog.open($("conversion-format").value);
   } catch (e) {
     status(e.message, true);
   }
-});
-$("confirm-convert").addEventListener("click", async () => {
-  if (!conversion) return;
-  if (conversion.revision !== state.revision) {
-    status("The conversion preview is stale. Preview again.", true);
-    return;
-  }
-  $("conversion").close();
-  await operation("/api/convert", { format: conversion.format, confirm: true });
-  conversion = null;
 });
 $("zoom-in").addEventListener("click", () => tree.zoom(1.2));
 $("zoom-out").addEventListener("click", () => tree.zoom(1 / 1.2));

@@ -81,6 +81,7 @@
         <div class="pane-heading">
           <h1>Tree view</h1>
           <button id="diff-toggle" type="button" aria-expanded="false" aria-controls="diff-panel">Changes</button>
+          <button id="validation-toggle" type="button" aria-expanded="false" aria-controls="validation-panel">Validation</button>
         </div>
         <section class="find-panel" aria-label="Find nodes">
           <form id="find-form" class="find-form">
@@ -124,6 +125,24 @@
           </div>
           <p id="diff-status" class="find-help" role="status" aria-live="polite"></p>
           <ol id="diff-results" class="find-results" aria-label="Structural changes"></ol>
+        </section>
+        <section id="validation-panel" class="validation-panel" aria-label="Schema validation" hidden>
+          <p id="validation-filename" class="find-help">No schema attached.</p>
+          <label for="validation-file">Upload JSON Schema</label>
+          <input id="validation-file" type="file" accept=".json,.schema.json,application/json" />
+          <details>
+            <summary>Paste JSON Schema</summary>
+            <textarea id="validation-text" rows="6" aria-label="JSON Schema" spellcheck="false" placeholder='{"type":"object"}'></textarea>
+            <button id="validation-attach" type="button">Attach pasted schema</button>
+          </details>
+          <div class="button-row">
+            <button id="validation-run" type="button" disabled>Validate</button>
+            <button id="validation-clear" type="button" disabled>Clear schema</button>
+            <button id="validation-previous" type="button" disabled>Previous error</button>
+            <button id="validation-next" type="button" disabled>Next error</button>
+          </div>
+          <p id="validation-status" role="status" aria-live="polite" class="find-help">Press Validate to check the applied document.</p>
+          <ol id="validation-results" class="find-results" aria-label="Validation errors"></ol>
         </section>
         <div
           id="canvas-wrap"
@@ -183,6 +202,7 @@
             </p>
           </div>
         </div>
+        <section id="validation-inspector" class="validation-inspector" aria-label="Selected node validation" hidden></section>
       </aside>
     </main>
     <footer>
@@ -214,10 +234,10 @@
       </form>
     </dialog>
     <dialog id="conversion">
-      <form method="dialog">
+      <form id="conversion-form">
         <div class="dialog-heading">
           <h2>Preview conversion</h2>
-          <button value="cancel" aria-label="Close">×</button>
+          <button id="close-convert" type="button" aria-label="Close">×</button>
         </div>
         <p>
           Conversion creates a new working representation. JSON removes
@@ -226,9 +246,19 @@
           source.
         </p>
         <pre id="conversion-preview"></pre>
+        <label class="conversion-save-option">
+          <input id="conversion-save" type="checkbox" />
+          <span id="conversion-save-label">Save a converted copy</span>
+        </label>
+        <div id="conversion-save-fields" hidden>
+          <label for="conversion-filename">Filename</label>
+          <input id="conversion-filename" type="text" autocomplete="off" spellcheck="false" aria-describedby="conversion-save-help" />
+          <p id="conversion-save-help"></p>
+        </div>
+        <p id="conversion-error" class="error" role="alert" hidden></p>
         <div class="button-row">
-          <button value="cancel">Cancel</button
-          ><button id="confirm-convert" type="button" class="primary">
+          <button id="cancel-convert" type="button">Cancel</button
+          ><button id="confirm-convert" type="submit" class="primary">
             Confirm conversion
           </button>
         </div>

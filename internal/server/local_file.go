@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -28,6 +29,14 @@ func (s *browserSession) openLocal(path string, revision int) error {
 	if err != nil {
 		return err
 	}
+	// Check before opening so named pipes and devices cannot block the server.
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("choose a regular file")
+	}
 	format := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 	switch format {
 	case "yml":
@@ -37,14 +46,6 @@ func (s *browserSession) openLocal(path string, revision int) error {
 	case "json", "jsonl", "yaml", "csv":
 	default:
 		return errors.New("choose a JSON, JSONL, YAML or CSV file")
-	}
-	// Check before opening so named pipes and devices cannot block the server.
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return errors.New("choose a regular file")
 	}
 	if info.Size() > document.MaxBytes {
 		return errors.New("file exceeds 10 MiB")
@@ -62,7 +63,7 @@ func (s *browserSession) openLocal(path string, revision int) error {
 		return errors.New("file exceeds 10 MiB")
 	}
 	if err = s.data.Import(format, data, revision); err != nil {
-		return err
+		return fmt.Errorf("invalid %s document: %w", strings.ToUpper(format), err)
 	}
 	s.path = path
 	s.filename = filepath.Base(path)

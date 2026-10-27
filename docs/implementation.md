@@ -1,5 +1,31 @@
 # Data Tree implementation record
 
+## Saving converted copies
+
+Conversion previews include the suggested basename/target extension and, for locally opened files (including CLI startup files), their resolved directory. `/api/convert` accepts an optional `saveFilename` constrained to a filename with the target extension in that directory. `Session.ConvertWithSave` validates converted output before invoking exclusive file creation, then commits history only after the write, sync and close succeed. Existing files and symlinks are never overwritten; failed partial writes are removed. Errors retain the working document and editable preview. The original file identity stays attached, and Undo affects memory rather than deleting saved copies.
+
+The conversion dialog offers an unchecked save option and editable suggested filename. Uploads have no trusted local directory and instead offer a named browser download. Controller tests cover local save, upload download, conversion without save, stale previews, invalid filenames, retry after errors and concurrent submission. HTTP tests verify real saved bytes, directory/name suggestions, unchanged originals, collision rejection and history behavior.
+
+## Startup file
+
+The CLI accepts one optional positional file after flags. `server.NewWithFile` reuses local-file validation before `net.Listen`, so invalid startup input cannot leave a running server. The validated document is an immutable startup snapshot; new browser sessions receive independent original bytes, revision/history and file provenance. Later file changes do not alter that snapshot, and editing remains in memory. Startup tests cover supported extensions, session isolation, malformed content, missing files and argument errors.
+
+## Schema validation
+
+CSV uses the same schema projection and diagnostic targeting as JSON and YAML: the instance is an array of row objects with string-valued cells. Upload and local-open workflow regressions cover CSV, YAML and the `.yml` alias through querying, inspection, editing, search, diff/revert, history, schema validation, conversion and download.
+
+Approved design and execution checklist: `superpowers/specs/2026-10-27-schema-validation-design.md` and `superpowers/plans/2026-10-27-schema-validation.md`.
+
+Schema validation uses vendored jsonschema/v6 v6.0.3 and x/text v0.14.0. Compilation permits built-in standard dialect metadata and embedded schema resources, with an external loader that rejects all filesystem/network fetches. Exact-number validation projects the ordered AST without lossy export. Separate provenance maps route aliases, inherited merges, stream documents and missing/unexpected property errors to current visible nodes.
+
+POST `/api/schema`, `/api/schema-clear` and `/api/validate` enforce origin/session/revision guards. Attachment/validation work snapshots immutable inputs outside the global lock and rechecks live session identity, document revision and schema generation before publishing. Attachment is separate from history and resets only after successful import/open. State responses restore metadata after reload; validation results remain frontend state and require explicit Validate.
+
+The focused frontend controller prevents late responses from restoring stale badges/navigation. The panel, keyboard tree list and Inspector render schema content as text; navigation reuses paginated source-map revelation and existing draft confirmation. Validation and diff badges clear independently.
+
+Review regressions cover enormous zero exponents (which can panic the upstream rational-number evaluator), malformed built-in YAML scalar tags, custom merge tags, empty property-name keys and reference evaluation cycles. A conservative preflight budget prevents multiplicative schema/instance error expansion before invoking the library. Only 200 diagnostic details are retained; marks cover all evaluated errors, and displayed paths/messages/value previews are bounded. This is a work estimate, not a wall-clock execution deadline.
+
+Browser inventory in this session is empty. Live layout, keyboard and synchronized-source acceptance remain unverified; automated coverage is recorded in the feature plan.
+
 Spec: the accepted Go Data Tree Editor plan in the project conversation.
 
 1. Parsing, source spans, limits and conversion.

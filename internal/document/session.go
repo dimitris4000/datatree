@@ -86,6 +86,12 @@ func (s *Session) Apply(format string, text []byte, rev int) error {
 	return nil
 }
 func (s *Session) Convert(format string, rev int) error {
+	return s.ConvertWithSave(format, rev, nil)
+}
+
+// ConvertWithSave validates conversion before saving and commits only if saving
+// succeeds. The callback receives the validated output and must not mutate it.
+func (s *Session) ConvertWithSave(format string, rev int, save func([]byte) error) error {
 	if err := s.check(rev); err != nil {
 		return err
 	}
@@ -102,6 +108,11 @@ func (s *Session) Convert(format string, rev int) error {
 	next, err := Parse(format, b)
 	if err != nil {
 		return err
+	}
+	if save != nil {
+		if err := save(next.Source); err != nil {
+			return err
+		}
 	}
 	s.commit(next)
 	return nil

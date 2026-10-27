@@ -7,6 +7,11 @@ export function diffBadge(mark) {
   if (mark?.contains) return { label: "Contains changes", background: "#e8edf8", color: "#485d89" };
   return null;
 }
+export function validationBadge(mark) {
+  if (mark?.direct) return { label: "Error", color: "#a1253b" };
+  if (mark?.contains) return { label: "Contains errors", color: "#a1253b" };
+  return null;
+}
 export function collapseAll(id, ranges, expanded) {
   if (id == null) {
     expanded.clear();
@@ -334,6 +339,11 @@ export class TreeCanvas {
     this.draw();
     this.callbacks.layout?.(this.graph);
   }
+  setValidationMarks(marks) {
+    this.validationMarks = marks;
+    this.draw();
+    this.callbacks.layout?.(this.graph);
+  }
   draw() {
     if (!this.canvas) return;
     const ctx = this.canvas.getContext("2d");
@@ -404,13 +414,24 @@ export class TreeCanvas {
       rounded(ctx, c.x, c.y, c.w, c.h);
       ctx.clip();
       const badge = diffBadge(this.diffMarks?.[c.id]);
-      const titleY = c.y + (badge ? 17 : 22);
+      const validation = validationBadge(this.validationMarks?.[c.id]);
+      const titleY = c.y + (badge || validation ? 17 : 22);
       ctx.fillStyle = badge?.background || "#f0f4ec";
       ctx.fillRect(c.x, c.y, c.w, 35);
       if (badge) {
-        ctx.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
+        ctx.font = `${validation ? 8 : 9}px ui-monospace, SFMono-Regular, Menlo, monospace`;
         ctx.fillStyle = badge.color;
-        ctx.fillText(badge.label, c.x + 31, c.y + 32);
+        ctx.fillText(badge.label, c.x + (validation ? 8 : 31), c.y + 32);
+      }
+      if (validation) {
+        ctx.font = `${badge ? 8 : 9}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+        ctx.fillStyle = validation.color;
+        ctx.textAlign = "right";
+        ctx.fillText(validation.label, c.x + c.w - 8, c.y + 32);
+        ctx.textAlign = "left";
+        ctx.strokeStyle = validation.color;
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(c.x + 2, c.y + 3); ctx.lineTo(c.x + 2, c.y + 33); ctx.stroke();
       }
       ctx.fillStyle = "#839479";
       ctx.fillText(
@@ -436,6 +457,7 @@ export class TreeCanvas {
       c.rows.forEach((r, i) => {
         const top = c.y + 40 + i * 23;
         const rowBadge = diffBadge(this.diffMarks?.[r.id]);
+        const rowValidation = validationBadge(this.validationMarks?.[r.id]);
         if (rowBadge) {
           ctx.fillStyle = rowBadge.background;
           ctx.fillRect(c.x + 1, top, c.w - 2, 23);
@@ -445,8 +467,8 @@ export class TreeCanvas {
           ctx.fillRect(c.x + 1, top, c.w - 2, 23);
         }
         ctx.font = "bold 11px ui-monospace, SFMono-Regular, Menlo, monospace";
-        const key = (rowBadge ? rowBadge.label + " · " : "") + short(r.label, rowBadge ? 12 : 22) + ": ";
-        ctx.fillStyle = rowBadge?.color || "#8a639c";
+        const key = (rowValidation ? "Error · " : "") + (rowBadge ? rowBadge.label + " · " : "") + short(r.label, rowBadge || rowValidation ? 12 : 22) + ": ";
+        ctx.fillStyle = rowValidation?.color || rowBadge?.color || "#8a639c";
         ctx.fillText(key, c.x + 13, top + 15);
         const kw = ctx.measureText(key).width;
         ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";

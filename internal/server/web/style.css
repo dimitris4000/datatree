@@ -536,6 +536,10 @@ dialog {
   color: var(--ink);
   box-shadow: 0 15px 80px #1a362b30;
 }
+.conversion-save-option { display: flex; align-items: center; gap: 8px; margin: 16px 0; }
+#conversion-filename { width: 100%; margin-top: 6px; }
+#conversion-save-help { overflow-wrap: anywhere; }
+
 dialog::backdrop {
   background: #17352b50;
 }
@@ -735,3 +739,15 @@ dialog pre {
 .diff-value-label { display: block; color: var(--muted); font-size: 10px; }
 .diff-value { margin: 4px 0 0; padding: 8px; border: 1px solid var(--line); border-radius: 4px; background: #fafbf8; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.5 ui-monospace, monospace; cursor: text; user-select: text; -webkit-user-select: text; }
 .diff-value:focus-visible { outline: 2px solid #769788; outline-offset: 2px; }
+/* Validation content stays separate from source and subtree editor drafts. */
+.validation-panel { padding: 10px 14px; border-bottom: 1px solid #d6dfcf; max-height: 45vh; overflow: auto; }
+.validation-panel [hidden], .validation-inspector[hidden] { display: none; }
+.validation-panel textarea { width: 100%; box-sizing: border-box; margin: 8px 0; font: 12px ui-monospace, monospace; }
+.validation-panel .button-row { flex-wrap: wrap; margin-top: 8px; }
+.validation-panel .find-results { max-height: none; }
+.validation-panel li { padding: 8px; border-left: 3px solid #a1253b; }
+.validation-panel pre, .validation-inspector pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; font-size: 12px; }
+.validation-panel small, .validation-inspector small { overflow-wrap: anywhere; }
+.validation-panel p, .validation-inspector p { margin: 6px 0; }
+.validation-inspector { border-top: 1px solid #d6dfcf; padding: 12px 16px; overflow: auto; max-height: 35vh; flex-shrink: 0; }
+.validation-inspector h2 { font-size: 14px; color: #a1253b; }

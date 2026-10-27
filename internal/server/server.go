@@ -31,6 +31,8 @@ type browserSession struct {
 	path               string
 	comparison         *document.Document
 	comparisonFilename string
+	schema             *attachedSchema
+	schemaGeneration   uint64
 	touched            time.Time
 }
 type Server struct {
@@ -38,11 +40,23 @@ type Server struct {
 	sessions  map[string]*browserSession
 	static    http.Handler
 	inspector *template.Template
+	initial   *browserSession
 }
 
 func New() *Server {
 	sub, _ := fs.Sub(assets, "web")
 	return &Server{sessions: map[string]*browserSession{}, static: http.FileServer(http.FS(sub)), inspector: template.Must(template.ParseFS(assets, "web/inspector.html"))}
+}
+
+// NewWithFile validates the initial document before the caller starts listening.
+func NewWithFile(path string) (*Server, error) {
+	initial := &browserSession{data: document.NewSession()}
+	if err := initial.openLocal(path, 0); err != nil {
+		return nil, fmt.Errorf("load startup file %q: %w", path, err)
+	}
+	s := New()
+	s.initial = initial
+	return s, nil
 }
 func loopbackHost(host string) bool {
 	if h, _, err := net.SplitHostPort(host); err == nil {
@@ -93,6 +107,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		r2.URL = &u
 		r2.URL.Path = strings.TrimPrefix(r.URL.Path, "/assets")
 		s.static.ServeHTTP(w, r2)
+		return
+	}
+	if r.URL.Path == "/api/schema" || r.URL.Path == "/api/schema-clear" || r.URL.Path == "/api/validate" {
+		s.schemaRequest(w, r)
 		return
 	}
 	s.mu.Lock()
@@ -176,13 +194,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		document.Action
-		Revision      int    `json:"revision"`
-		Direction     string `json:"direction"`
-		Path          string `json:"path"`
-		Filename      string `json:"filename"`
-		Baseline      string `json:"baseline"`
-		BaselineToken string `json:"baselineToken"`
-		ChangeIndex   *int   `json:"changeIndex"`
+		Revision      int     `json:"revision"`
+		Direction     string  `json:"direction"`
+		Path          string  `json:"path"`
+		Filename      string  `json:"filename"`
+		Baseline      string  `json:"baseline"`
+		BaselineToken string  `json:"baselineToken"`
+		ChangeIndex   *int    `json:"changeIndex"`
+		SaveFilename  *string `json:"saveFilename"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, document.MaxBytes*6+4096)
 	if r.URL.Path == "/actions/edit" {
@@ -229,6 +248,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var err error
+	var savedPath string
 	switch r.URL.Path {
 	case "/api/import":
 		err = d.Import(in.Format, []byte(in.Text), in.Revision)
@@ -260,7 +280,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			var text string
 			text, err = d.Preview(in.Format)
 			if err == nil {
-				writeJSON(w, map[string]any{"text": text, "format": in.Format, "revision": d.Revision})
+				writeJSON(w, session.conversionPreview(in.Format, text))
 				return
 			}
 		}
@@ -268,7 +288,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !in.Confirm {
 			err = errors.New("preview and confirm conversion first")
 		} else {
-			err = d.Convert(in.Format, in.Revision)
+			savedPath, err = session.convert(in.Format, in.Revision, in.SaveFilename)
 		}
 	default:
 		http.NotFound(w, r)
@@ -277,6 +297,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err == nil && (r.URL.Path == "/api/import" || r.URL.Path == "/api/open") {
 		session.comparison = nil
 		session.comparisonFilename = ""
+		session.schema = nil
+		session.schemaGeneration++
 	}
 	if r.URL.Path == "/actions/edit" {
 		if err != nil {
@@ -292,7 +314,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	state(w, session)
+	writeState(w, session, savedPath)
 }
 func checkQueryRevision(r *http.Request, d *document.Session) error {
 	q := r.URL.Query().Get("revision")
@@ -331,13 +353,30 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) *browserSession
 	}
 	id := hex.EncodeToString(token)
 	v := &browserSession{data: document.NewSession(), touched: now}
+	if s.initial != nil {
+		initial := s.initial
+		// Parsed documents are immutable; edits produce a new document. Each
+		// session owns its revision, original bytes and history independently.
+		v.data = &document.Session{Doc: initial.data.Doc, Original: bytes.Clone(initial.data.Original), OriginalFormat: initial.data.OriginalFormat, Revision: 1}
+		v.path, v.filename = initial.path, initial.filename
+	}
 	s.sessions[id] = v
 	http.SetCookie(w, &http.Cookie{Name: "datatree_session", Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	return v
 }
 func state(w http.ResponseWriter, session *browserSession) {
+	writeState(w, session, "")
+}
+
+func writeState(w http.ResponseWriter, session *browserSession, savedPath string) {
 	d := session.data
 	v := map[string]any{"revision": d.Revision, "canUndo": d.CanUndo(), "canRedo": d.CanRedo()}
+	if savedPath != "" {
+		v["savedPath"] = savedPath
+	}
+	if session.schema != nil {
+		v["schema"] = session.schema.metadata
+	}
 	if session.filename != "" {
 		v["filename"] = session.filename
 	}

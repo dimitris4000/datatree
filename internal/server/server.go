@@ -194,16 +194,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		document.Action
-		Revision      int     `json:"revision"`
-		Direction     string  `json:"direction"`
-		Path          string  `json:"path"`
-		Filename      string  `json:"filename"`
-		Baseline      string  `json:"baseline"`
-		BaselineToken string  `json:"baselineToken"`
-		ChangeIndex   *int    `json:"changeIndex"`
-		SaveFilename  *string `json:"saveFilename"`
+		Revision      int           `json:"revision"`
+		Direction     string        `json:"direction"`
+		Path          string        `json:"path"`
+		Filename      string        `json:"filename"`
+		Baseline      string        `json:"baseline"`
+		BaselineToken string        `json:"baselineToken"`
+		ChangeIndex   *int          `json:"changeIndex"`
+		SaveFilename  *string       `json:"saveFilename"`
+		Schema        *schemaUpload `json:"schema"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, document.MaxBytes*6+4096)
+	r.Body = http.MaxBytesReader(w, r.Body, (document.MaxBytes+document.MaxSchemaBytes)*6+8192)
 	if r.URL.Path == "/actions/edit" {
 		if err := r.ParseForm(); err != nil {
 			fail(w, err)
@@ -251,11 +252,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var savedPath string
 	switch r.URL.Path {
 	case "/api/import":
-		err = d.Import(in.Format, []byte(in.Text), in.Revision)
-		if err == nil {
-			session.path = ""
-			session.filename = in.Filename
-		}
+		err = session.importUploaded(in.Format, in.Text, in.Filename, in.Schema, in.Revision)
 	case "/api/open":
 		err = session.openLocal(in.Path, in.Revision)
 	case "/api/diff-revert":
@@ -297,8 +294,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err == nil && (r.URL.Path == "/api/import" || r.URL.Path == "/api/open") {
 		session.comparison = nil
 		session.comparisonFilename = ""
-		session.schema = nil
-		session.schemaGeneration++
 	}
 	if r.URL.Path == "/actions/edit" {
 		if err != nil {
@@ -359,6 +354,7 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) *browserSession
 		// session owns its revision, original bytes and history independently.
 		v.data = &document.Session{Doc: initial.data.Doc, Original: bytes.Clone(initial.data.Original), OriginalFormat: initial.data.OriginalFormat, Revision: 1}
 		v.path, v.filename = initial.path, initial.filename
+		v.schema, v.schemaGeneration = initial.schema, initial.schemaGeneration
 	}
 	s.sessions[id] = v
 	http.SetCookie(w, &http.Cookie{Name: "datatree_session", Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})

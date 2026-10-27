@@ -1,5 +1,11 @@
 # Data Tree implementation record
 
+## Companion schema discovery
+
+Local opens, including CLI startup, check the selected path with its final extension replaced by `.schema.json`. Discovery uses the user-selected path before resolving a file symlink; the existing resolved file path remains the document's Git/save identity. Missing companions are optional, while existing unreadable/nonregular/oversized/invalid schemas reject the complete open. Parsing/compilation finish before committing document, attachment and schema generation. New startup sessions share immutable compiled schema data with independent attachment lifecycle; successful opens without a companion clear old attachments.
+
+Browser file selection can include one document and its matching sidecar. Folder selection enumerates granted files and pairs only siblings in the selected document directory. `/api/import` receives both in one request, checks schema naming and compiles before committing either. It never searches the server working directory for an uploaded filename. File reads preserve their captured revision and suppress superseded selections. Attachment remains separate from explicit validation. JSONL validation now checks each record independently and retains its source location and record index.
+
 ## Saving converted copies
 
 Conversion previews include the suggested basename/target extension and, for locally opened files (including CLI startup files), their resolved directory. `/api/convert` accepts an optional `saveFilename` constrained to a filename with the target extension in that directory. `Session.ConvertWithSave` validates converted output before invoking exclusive file creation, then commits history only after the write, sync and close succeed. Existing files and symlinks are never overwritten; failed partial writes are removed. Errors retain the working document and editable preview. The original file identity stays attached, and Undo affects memory rather than deleting saved copies.

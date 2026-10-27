@@ -16,3 +16,14 @@ func TestCSVSchemaValidationUsesRowsAndStringCells(t *testing.T) {
 		t.Fatalf("CSV strings were coerced: %+v", valid)
 	}
 }
+
+func TestJSONLSchemaValidatesEachRecordAndTargetsItsLine(t *testing.T) {
+	d, result := schemaCheck(t, "jsonl", "{\"name\":\"Alice\"}\n\n{\"name\":\"Bob\"}\n", `{"type":"object","properties":{"name":{"const":"Alice"}}}`)
+	if result.Valid || !result.Complete || len(result.Diagnostics) != 1 {
+		t.Fatalf("%+v", result)
+	}
+	e := result.Diagnostics[0]
+	if e.DocumentIndex != 1 || e.InstancePath != "/name" || e.Target != d.Root.Children[1].Children[0].ID || e.Location != "line 3, column 9" {
+		t.Fatalf("incorrect JSONL target: %+v", e)
+	}
+}

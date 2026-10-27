@@ -1,4 +1,5 @@
 import { mountDiffPanel } from "./diff.js";
+import { readFileImport, selectUploadDocument, isDocumentFile } from "./file-import.js";
 import { mountConversionDialog, downloadConvertedCopy } from "./conversion.js";
 import { mountValidationPanel, canValidateDocument } from "./validation.js";
 import { revealResult, mountFindPanel } from "./find.js";
@@ -168,7 +169,7 @@ async function operation(path, data, options = {}) {
     await install(await api(path, data), options);
     status(
       options.imported
-        ? "File opened. Click a field or card to inspect it."
+        ? (state.schema ? `File opened. Attached ${state.schema.filename}; press Validate to check it.` : "File opened. Click a field or card to inspect it.")
         : "Changes applied. Download to save a copy.",
     );
   } catch (e) {
@@ -465,6 +466,7 @@ $("working-tab").addEventListener("click", () => sourceTab(false));
 $("original-tab").addEventListener("click", () => sourceTab(true));
 $("open-file").addEventListener("click", () => {
   if (!ready() || !canLeaveInspector()) return;
+  $("file-open-error").hidden = true;
   $("open-document").showModal();
 });
 $("close-open-document").addEventListener("click", () => $("open-document").close());
@@ -475,32 +477,54 @@ $("local-file-form").addEventListener("submit", async (event) => {
   $("open-document").close();
   await operation("/api/open", { path }, { fit: true, imported: true });
 });
-$("file").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  $("open-document").close();
+let uploadGeneration = 0;
+async function uploadFile(file, files) {
+  const generation = ++uploadGeneration, revision = state.revision;
   try {
-    if (file.size > 10 * 1024 * 1024) throw new Error("File exceeds 10 MB.");
-    const ext = file.name.split(".").pop().toLowerCase();
-    const format = ext === "yml" ? "yaml" : ext === "ndjson" ? "jsonl" : ext;
-    if (!["json", "jsonl", "yaml", "csv"].includes(format))
-      throw new Error("Choose a JSON, JSONL, YAML or CSV file.");
-    await operation(
-      "/api/import",
-      {
-        text: new TextDecoder("utf-8", { fatal: true }).decode(
-          await file.arrayBuffer(),
-        ),
-        format,
-        filename: file.name,
-      },
-      { fit: true, imported: true },
-    );
+    const payload = await readFileImport(file, files);
+    if (generation !== uploadGeneration) return;
+    if (revision !== state.revision) throw new Error('Document changed while reading files; open the file again.');
+    $("open-document").close();
+    await operation('/api/import', { ...payload, revision }, { fit: true, imported: true });
+  } catch (err) {
+    if (generation !== uploadGeneration) return;
+    status(err.message, true);
+    $("file-open-error").textContent = err.message;
+    $("file-open-error").hidden = false;
+  }
+}
+$("file").addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files);
+  if (!files.length) return;
+  try {
+    await uploadFile(selectUploadDocument(files), files);
   } catch (err) {
     status(err.message, true);
+    $("file-open-error").textContent = err.message;
+    $("file-open-error").hidden = false;
   } finally {
     e.target.value = "";
   }
+});
+let folderFiles = [];
+$("folder-files").addEventListener('change', e => {
+  folderFiles = Array.from(e.target.files);
+  const select = $("folder-document");
+  select.replaceChildren();
+  for (const [index, file] of folderFiles.entries()) {
+    if (!isDocumentFile(file)) continue;
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = file.webkitRelativePath || file.name;
+    select.append(option);
+  }
+  $("folder-selection").hidden = !select.options.length;
+  $("file-open-error").hidden = !!select.options.length;
+  if (!select.options.length) $("file-open-error").textContent = 'No supported documents found in this folder.';
+});
+$("open-folder-document").addEventListener('click', async () => {
+  const file = folderFiles[Number($("folder-document").value)];
+  if (file) await uploadFile(file, folderFiles);
 });
 $("example").addEventListener("click", async () => {
   await operation(

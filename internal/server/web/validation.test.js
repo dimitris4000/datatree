@@ -11,8 +11,8 @@ function fixture(options={}) {
  const c=new ValidationController({revision:()=>revision,attach:async()=>({revision,schema:metadata}),clear:async()=>({revision,schema:null}),validate:async()=>{calls++;return result(revision);},navigate:async()=>true,render(){},...options});
  return {c,get calls(){return calls;},change(){revision++;c.install(metadata);}};
 }
-test('CSV and YAML documents can attach schemas and run validation in the UI', async()=>{
- for (const format of ['csv', 'yaml']) {
+test('CSV, YAML and JSONL documents can attach schemas and run validation in the UI', async()=>{
+ for (const format of ['csv', 'yaml', 'jsonl']) {
   const f=fixture({available:()=>canValidateDocument({root:'1',format})});
   await f.c.replace(async()=>({text:'true'}));
   assert.equal(f.c.schema?.token,'s1');

@@ -25,6 +25,7 @@ func (s *browserSession) openLocal(path string, revision int) error {
 	if err != nil {
 		return err
 	}
+	schemaPath := companionPath(path)
 	path, err = filepath.EvalSymlinks(path)
 	if err != nil {
 		return err
@@ -62,11 +63,17 @@ func (s *browserSession) openLocal(path string, revision int) error {
 	if len(data) > document.MaxBytes {
 		return errors.New("file exceeds 10 MiB")
 	}
+	schema, err := readCompanionSchema(schemaPath, s.schemaGeneration+1)
+	if err != nil {
+		return err
+	}
 	if err = s.data.Import(format, data, revision); err != nil {
 		return fmt.Errorf("invalid %s document: %w", strings.ToUpper(format), err)
 	}
 	s.path = path
 	s.filename = filepath.Base(path)
+	s.schema = schema
+	s.schemaGeneration++
 	return nil
 }
 

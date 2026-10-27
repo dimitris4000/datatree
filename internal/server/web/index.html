@@ -221,13 +221,22 @@
         <h2 id="open-document-title">Open file</h2>
         <button id="close-open-document" type="button" aria-label="Close">×</button>
       </div>
-      <label for="file">Choose a file</label>
-      <input id="file" type="file" accept=".json,.jsonl,.ndjson,.yaml,.yml,.csv" />
+      <label for="file">Choose a document and optional matching schema</label>
+      <input id="file" type="file" multiple accept=".json,.jsonl,.ndjson,.yaml,.yml,.csv" />
+      <p>Choose both data.yaml and data.schema.json to attach the schema automatically. Browsers cannot read unselected sibling files.</p>
+      <label for="folder-files">Or choose a folder to find schemas automatically</label>
+      <input id="folder-files" type="file" webkitdirectory multiple />
+      <div id="folder-selection" hidden>
+        <label for="folder-document">Document in folder</label>
+        <select id="folder-document"></select>
+        <button id="open-folder-document" type="button">Open selected document</button>
+      </div>
+      <p id="file-open-error" class="error" role="alert" hidden></p>
       <p>Or enter a local path to include Git branch and commit details.</p>
       <form id="local-file-form">
         <label for="local-path">Local file path</label>
         <input id="local-path" type="text" required placeholder="/path/to/data.json" aria-describedby="local-path-help" />
-        <p id="local-path-help">Relative paths start from the server’s working directory.</p>
+        <p id="local-path-help">Relative paths start from the server’s working directory. Matching .schema.json files are attached automatically.</p>
         <div class="button-row">
           <button type="submit" class="primary">Open</button>
         </div>

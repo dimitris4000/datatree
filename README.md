@@ -20,6 +20,10 @@ go run ./cmd/datatree -listen 127.0.0.1:8090 ./data.yaml
 
 For a compiled binary, use `datatree [flags] [file]`. JSON, JSONL/NDJSON, YAML/YML and CSV are supported. Paths are relative to the process's working directory unless absolute; quote paths containing spaces. Put flags before the file argument. Missing or unreadable files, directories, unsupported extensions, invalid UTF-8, oversized files and malformed documents stop startup before listening, with a nonzero exit status and an error naming the file and cause. Each new browser session starts from the validated startup snapshot with independent edits/history. Omitting the file starts an empty workspace.
 
+Opening `XXX.YYY` by CLI argument or the WebUI’s local path also checks for `XXX.schema.json` in that directory. If found, it is attached automatically; press **Validate** to run it. Missing companions are optional. An existing unreadable, oversized or invalid companion stops startup, or rejects the WebUI open while retaining the previous document/schema. Schemas are limited to 1 MiB and use the normal offline schema rules.
+
+Browser uploads cannot access unselected siblings. Select the document and its matching `.schema.json` together, or use **Choose a folder**, select a document from that folder, then **Open selected document**. Folder loading only pairs schemas from the selected document’s own directory. The document and schema are loaded together; an invalid pair leaves the previous workspace intact.
+
 ### Enable p5.js
 
 The project uses a p5.js canvas when p5 is available, with a native Canvas 2D fallback for an offline checkout. This development environment could not download p5.js, so its distribution is **not included**. To install the pinned p5.js 1.11.11 distribution:
@@ -83,13 +87,13 @@ Search and query text are limited to 4,096 UTF-8 bytes. Results are capped at 20
 
 ### Schema validation
 
-Open **Validation**, upload a JSON Schema or expand **Paste JSON Schema** and choose **Attach pasted schema**, then press **Validate**. Attaching a schema and opening the panel do not run validation. Validation checks the last applied JSON, YAML or CSV document; unapplied source and subtree drafts are excluded. CSV validates as an array of row objects keyed by the headers, with every cell remaining a string (including numbers and empty cells). JSONL validation is unsupported.
+Open **Validation** to see an automatically attached companion schema, upload a JSON Schema, or expand **Paste JSON Schema** and choose **Attach pasted schema**, then press **Validate**. Attaching a schema and opening the panel do not run validation. Validation checks the last applied JSON, JSONL, YAML or CSV document; unapplied source and subtree drafts are excluded. CSV validates as an array of row objects keyed by the headers, with every cell remaining a string (including numbers and empty cells). JSONL validates each nonblank record independently against the same schema.
 
 Errors appear in a navigable list, on affected tree cards/fields and their ancestors, in the keyboard node list, and in the selected node's Inspector. Select an error or use **Previous error** / **Next error** to reveal its page, select the node and highlight its source. Existing source/subtree draft guards still apply to navigation. Validation labels coexist with Changes labels. Closing Validation hides its indicators.
 
 Allowed-value previews come from `enum` and `const`, including referenced schemas. Each preview names its schema constraint/branch; it does not promise to satisfy other constraints and never applies edits. Defaults and examples are not suggestions. Property-name constraints describe keys, not replacement field values.
 
-Accepted edits, conversion and Undo/Redo mark results stale and remove active badges. Press Validate to recompute. Schema attachments survive these operations and page reloads, reset on a successful new-file import/open, and expire with the session. Results are not restored on reload. Failed schema replacements retain the previous attachment/results. **Clear schema** removes the attachment. Validation changes no source, revisions, history or disk files.
+Accepted edits, conversion and Undo/Redo mark results stale and remove active badges. Press Validate to recompute. Schema attachments survive these operations and page reloads. A successful new-file import/open replaces the previous schema with its companion, or clears it if none is available. CLI sessions start with the validated document/schema snapshot, independently of other sessions. Attachments expire with the session. Results are not restored on reload. Failed schema replacements retain the previous attachment/results. **Clear schema** removes the attachment. Validation changes no source, revisions, history or disk files.
 
 Schemas must be JSON objects or booleans. Draft 2020-12 is the default; supported standard `$schema` declarations select drafts 4, 6, 7, 2019-09 or 2020-12. Built-in dialect metadata and resources embedded in the uploaded schema are available offline. External filesystem/network references and custom dialect loading are disabled. `format` follows the selected draft's standard library behavior; optional content decoding/assertions are disabled.
 

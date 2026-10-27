@@ -145,8 +145,8 @@ func ValidateSchema(d *Document, s *CompiledSchema) (ValidationResult, error) {
 	if d == nil || s == nil {
 		return result, errors.New("open a document and attach a schema first")
 	}
-	if d.Format != "json" && d.Format != "yaml" && d.Format != "csv" {
-		return result, errors.New("schema validation supports JSON, YAML and CSV")
+	if d.Format != "json" && d.Format != "yaml" && d.Format != "csv" && d.Format != "jsonl" {
+		return result, errors.New("schema validation supports JSON, JSONL, YAML and CSV")
 	}
 	rawNodes := map[*yaml.Node]*Node{}
 	for _, n := range d.Nodes {
@@ -154,7 +154,7 @@ func ValidateSchema(d *Document, s *CompiledSchema) (ValidationResult, error) {
 	}
 	projection := &schemaProjection{rawNodes: rawNodes, visiting: map[*yaml.Node]bool{}, merges: newMergeResolver()}
 	roots := []*Node{d.Root}
-	if d.Root.Kind == "stream" {
+	if d.Root.Kind == "stream" || d.Format == "jsonl" {
 		roots = d.Root.Children
 	}
 	printer := message.NewPrinter(language.English)

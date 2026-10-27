@@ -1,5 +1,5 @@
 export function canValidateDocument(state) {
-  return !!state.root && ['json', 'yaml', 'csv'].includes(state.format);
+  return !!state.root && ['json', 'jsonl', 'yaml', 'csv'].includes(state.format);
 }
 
 export class ValidationController {
@@ -33,7 +33,7 @@ export class ValidationController {
     this.uploading = true; this.generation++; this.loading = false; this.error = '';
     this.render(this);
     try {
-      if (!this.available()) throw new Error('Open a JSON, YAML or CSV document first.');
+      if (!this.available()) throw new Error('Open a document first.');
       const payload = await read();
       if (epoch !== this.documentEpoch || revision !== this.revision()) return;
       if (new TextEncoder().encode(payload.text).length > 1024 * 1024) throw new Error('Schema exceeds 1 MiB.');
@@ -61,7 +61,7 @@ export class ValidationController {
     const generation = ++this.generation, revision = this.revision(), token = this.schema.token;
     this.loading = true; this.navigating = false; this.error = ''; this.render(this);
     try {
-      if (!this.available()) throw new Error('Validation supports JSON, YAML and CSV.');
+      if (!this.available()) throw new Error('Open a document first.');
       const result = await this.validate(revision, token);
       if (generation !== this.generation) return;
       if (revision !== this.revision() || result.revision !== revision || result.schema.token !== token)

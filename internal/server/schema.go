@@ -23,6 +23,19 @@ type attachedSchema struct {
 	metadata schemaMetadata
 }
 
+func newAttachedSchema(compiled *document.CompiledSchema, text []byte, filename string, generation uint64) *attachedSchema {
+	hash := sha256.Sum256(text)
+	if len(filename) > 1024 {
+		filename = "Uploaded schema"
+	}
+	if strings.TrimSpace(filename) == "" {
+		filename = "Pasted schema"
+	}
+	parts := strings.Split(strings.ReplaceAll(filename, "\\", "/"), "/")
+	filename = parts[len(parts)-1]
+	return &attachedSchema{compiled: compiled, metadata: schemaMetadata{Filename: filename, Token: fmt.Sprintf("%d-%x", generation, hash)}}
+}
+
 // Schema work deliberately bypasses ServeHTTP's global-lock dispatch. Snapshot
 // only immutable inputs, then verify session identity and both generations.
 func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) {
@@ -70,9 +83,9 @@ func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		return
 	}
-	if session.data.Doc.Format != "json" && session.data.Doc.Format != "yaml" && session.data.Doc.Format != "csv" {
+	if session.data.Doc.Format != "json" && session.data.Doc.Format != "yaml" && session.data.Doc.Format != "csv" && session.data.Doc.Format != "jsonl" {
 		s.mu.Unlock()
-		fail(w, errors.New("schema validation supports JSON, YAML and CSV"))
+		fail(w, errors.New("schema validation supports JSON, JSONL, YAML and CSV"))
 		return
 	}
 	attachment := session.schema
@@ -132,18 +145,7 @@ func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if compiled != nil {
 		session.schemaGeneration++
-		hash := sha256.Sum256([]byte(in.Text))
-		filename := in.Filename
-		if len(filename) > 1024 {
-			filename = "Uploaded schema"
-		}
-		if strings.TrimSpace(filename) == "" {
-			filename = "Pasted schema"
-		}
-		filename = strings.ReplaceAll(filename, "\\", "/")
-		parts := strings.Split(filename, "/")
-		filename = parts[len(parts)-1]
-		session.schema = &attachedSchema{compiled: compiled, metadata: schemaMetadata{Filename: filename, Token: fmt.Sprintf("%d-%x", session.schemaGeneration, hash)}}
+		session.schema = newAttachedSchema(compiled, []byte(in.Text), in.Filename, session.schemaGeneration)
 		writeJSON(w, map[string]any{"revision": *in.Revision, "schema": session.schema.metadata})
 		return
 	}

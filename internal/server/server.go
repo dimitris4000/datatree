@@ -41,20 +41,25 @@ type Server struct {
 	static    http.Handler
 	inspector *template.Template
 	initial   *browserSession
+	limits    document.Limits
 }
 
-func New() *Server {
+func New(options ...document.Limits) *Server {
+	limits := document.DefaultLimits()
+	if len(options) > 0 {
+		limits = options[0].Normalized()
+	}
 	sub, _ := fs.Sub(assets, "web")
-	return &Server{sessions: map[string]*browserSession{}, static: http.FileServer(http.FS(sub)), inspector: template.Must(template.ParseFS(assets, "web/inspector.html"))}
+	return &Server{sessions: map[string]*browserSession{}, static: http.FileServer(http.FS(sub)), inspector: template.Must(template.ParseFS(assets, "web/inspector.html")), limits: limits}
 }
 
 // NewWithFile validates the initial document before the caller starts listening.
-func NewWithFile(path string) (*Server, error) {
-	initial := &browserSession{data: document.NewSession()}
+func NewWithFile(path string, options ...document.Limits) (*Server, error) {
+	s := New(options...)
+	initial := &browserSession{data: document.NewSession(s.limits)}
 	if err := initial.openLocal(path, 0); err != nil {
 		return nil, fmt.Errorf("load startup file %q: %w", path, err)
 	}
-	s := New()
 	s.initial = initial
 	return s, nil
 }
@@ -208,7 +213,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		SaveFilename  *string       `json:"saveFilename"`
 		Schema        *schemaUpload `json:"schema"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, (document.MaxBytes+document.MaxSchemaBytes)*6+8192)
+	r.Body = http.MaxBytesReader(w, r.Body, (int64(s.limits.MaxBytes)+document.MaxSchemaBytes)*6+8192)
 	if r.URL.Path == "/actions/edit" {
 		if err := r.ParseForm(); err != nil {
 			fail(w, err)
@@ -234,7 +239,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				in.Text = value
 			}
 			in.Format = "json"
-			parsed, err := document.Parse("json", []byte(in.Text))
+			parsed, err := d.Parse("json", []byte(in.Text))
 			if err != nil || parsed.Root.Kind != kind {
 				s.renderInspector(w, r, d, "Value does not match the selected type")
 				return
@@ -355,12 +360,12 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) *browserSession
 		panic(err)
 	}
 	id := hex.EncodeToString(token)
-	v := &browserSession{data: document.NewSession(), touched: now}
+	v := &browserSession{data: document.NewSession(s.limits), touched: now}
 	if s.initial != nil {
 		initial := s.initial
 		// Parsed documents are immutable; edits produce a new document. Each
 		// session owns its revision, original bytes and history independently.
-		v.data = &document.Session{Doc: initial.data.Doc, Original: bytes.Clone(initial.data.Original), OriginalFormat: initial.data.OriginalFormat, Revision: 1}
+		v.data = &document.Session{Doc: initial.data.Doc, Original: bytes.Clone(initial.data.Original), OriginalFormat: initial.data.OriginalFormat, Revision: 1, Limits: s.limits}
 		v.path, v.filename = initial.path, initial.filename
 		v.schema, v.schemaGeneration = initial.schema, initial.schemaGeneration
 	}
@@ -375,6 +380,7 @@ func state(w http.ResponseWriter, session *browserSession) {
 func writeState(w http.ResponseWriter, session *browserSession, savedPath string) {
 	d := session.data
 	v := map[string]any{"revision": d.Revision, "canUndo": d.CanUndo(), "canRedo": d.CanRedo()}
+	v["limits"] = d.Limits.Normalized()
 	if savedPath != "" {
 		v["savedPath"] = savedPath
 	}

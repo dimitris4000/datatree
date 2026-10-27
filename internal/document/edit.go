@@ -44,7 +44,7 @@ func (d *Document) Edit(a Action) (*Document, error) {
 		current, _ := d.YAML(target.ID)
 		normalized := func(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
 		if normalized(a.Text) == normalized(current) {
-			return Parse(d.Format, d.Source)
+			return d.parse(d.Format, d.Source)
 		}
 		incoming, err := d.yamlFragment(a.Text)
 		if err != nil {
@@ -69,7 +69,7 @@ func (d *Document) Edit(a Action) (*Document, error) {
 		if f == "" {
 			f = "json"
 		}
-		incoming, err := Parse(f, []byte(a.Text))
+		incoming, err := d.parse(f, []byte(a.Text))
 		if err != nil {
 			return nil, err
 		}
@@ -77,7 +77,7 @@ func (d *Document) Edit(a Action) (*Document, error) {
 			return nil, errors.New("subtree must contain one document")
 		}
 		if d.Format == "yaml" && !a.Confirm && !a.Structured {
-			if _, err := jsonBytes(target.raw, false); err != nil {
+			if _, err := jsonBytes(target.raw, false, d.Limits()); err != nil {
 				return nil, errors.New("confirm lossy JSON replacement of YAML subtree first")
 			}
 		}
@@ -103,7 +103,7 @@ func (d *Document) Edit(a Action) (*Document, error) {
 		if f == "" {
 			f = "json"
 		}
-		v, err := Parse(f, []byte(a.Text))
+		v, err := d.parse(f, []byte(a.Text))
 		if err != nil {
 			return nil, err
 		}
@@ -198,11 +198,11 @@ func (d *Document) Edit(a Action) (*Document, error) {
 		}
 		return d.patch(patchTarget, replacement, true)
 	}
-	b, err := encode(d.Format, root, d.headers)
+	b, err := encode(d.Format, root, d.headers, d.Limits())
 	if err != nil {
 		return nil, err
 	}
-	return Parse(d.Format, b)
+	return d.parse(d.Format, b)
 }
 func sameLine(source []byte, start int, key *yaml.Node) bool {
 	if key == nil {
@@ -261,7 +261,7 @@ func (d *Document) patch(n *Node, replacement string, includeComment bool) (*Doc
 	b = append(b, d.Source[:start]...)
 	b = append(b, replacement...)
 	b = append(b, d.Source[end:]...)
-	next, err := Parse(d.Format, b)
+	next, err := d.parse(d.Format, b)
 	if err != nil {
 		return nil, fmt.Errorf("edit rejected; source unchanged: %w", err)
 	}
@@ -314,7 +314,7 @@ func renameAnchors(copied, root *yaml.Node) {
 
 // Validate standalone fragments, with harmless anchor stubs for references into the document.
 func (d *Document) yamlFragment(text string) (*yaml.Node, error) {
-	parsed, err := Parse("yaml", []byte(text))
+	parsed, err := d.parse("yaml", []byte(text))
 	if err == nil {
 		return parsed.raw, nil
 	}
@@ -332,7 +332,7 @@ func (d *Document) yamlFragment(text string) (*yaml.Node, error) {
 	}
 	prefix.WriteString("value:\n  ")
 	prefix.WriteString(indentFragment(strings.ReplaceAll(text, "\r\n", "\n"), 2))
-	wrapped, e := Parse("yaml", []byte(prefix.String()))
+	wrapped, e := d.parse("yaml", []byte(prefix.String()))
 	if e != nil {
 		return nil, err
 	}

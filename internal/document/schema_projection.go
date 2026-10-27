@@ -23,6 +23,7 @@ type schemaProjection struct {
 	merges      *mergeResolver
 	work, bytes int
 	target      *Node
+	limits      Limits
 }
 
 func pointer(parts []string) string {
@@ -67,11 +68,11 @@ func (p *schemaProjection) project(n *yaml.Node, target, forced *Node, path []st
 	if n == nil {
 		return nil, errors.New("dangling alias")
 	}
-	if p.work > MaxNodes || depth > MaxDepth {
+	if p.work > p.limits.MaxNodes || depth > MaxDepth {
 		return nil, errors.New("expanded document exceeds validation node/depth limits")
 	}
 	p.bytes += len(n.Value) + 8
-	if p.bytes > MaxBytes {
+	if p.bytes > p.limits.MaxBytes {
 		return nil, errors.New("expanded document exceeds validation byte limit")
 	}
 	if p.visiting[n] {
@@ -206,7 +207,7 @@ func (p *schemaProjection) project(n *yaml.Node, target, forced *Node, path []st
 
 func (p *schemaProjection) checkMergeSource(n *yaml.Node, visiting map[*yaml.Node]bool) error {
 	p.work++
-	if p.work > MaxNodes {
+	if p.work > p.limits.MaxNodes {
 		return errors.New("merge expansion exceeds validation work limit")
 	}
 	if n == nil {

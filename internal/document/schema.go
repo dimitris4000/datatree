@@ -53,7 +53,7 @@ func CompileSchema(source []byte) (*CompiledSchema, error) {
 	if len(source) > MaxSchemaBytes {
 		return nil, errors.New("schema exceeds 1 MiB")
 	}
-	d, err := Parse("json", source)
+	d, err := ParseWithLimits("json", source, Limits{MaxBytes: MaxSchemaBytes, MaxNodes: 20000})
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +152,7 @@ func ValidateSchema(d *Document, s *CompiledSchema) (ValidationResult, error) {
 	for _, n := range d.Nodes {
 		rawNodes[n.raw] = n
 	}
-	projection := &schemaProjection{rawNodes: rawNodes, visiting: map[*yaml.Node]bool{}, merges: newMergeResolver()}
+	projection := &schemaProjection{rawNodes: rawNodes, visiting: map[*yaml.Node]bool{}, merges: newMergeResolver(d.Limits()), limits: d.Limits()}
 	roots := []*Node{d.Root}
 	if d.Root.Kind == "stream" || d.Format == "jsonl" {
 		roots = d.Root.Children

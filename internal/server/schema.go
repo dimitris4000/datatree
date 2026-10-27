@@ -111,6 +111,7 @@ func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) {
 	generation := session.schemaGeneration
 	source := bytes.Clone(session.data.Doc.Source)
 	format := session.data.Doc.Format
+	limits := session.data.Doc.Limits()
 	s.mu.Unlock()
 
 	var result document.ValidationResult
@@ -137,7 +138,7 @@ func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		var snapshot *document.Document
-		snapshot, err = document.Parse(format, source)
+		snapshot, err = document.ParseWithLimits(format, source, limits)
 		if err == nil {
 			result, err = document.ValidateSchema(snapshot, attachment.compiled)
 		}

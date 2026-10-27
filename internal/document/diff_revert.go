@@ -90,11 +90,11 @@ func (d *Document) RevertDiff(base *Document, index int) (*Document, error) {
 		patchTarget = d.Root
 	}
 	// Validate the entire desired graph and format before touching source bytes.
-	encoded, err := encode(d.Format, root, d.headers)
+	encoded, err := encode(d.Format, root, d.headers, d.Limits())
 	if err != nil {
 		return nil, fmt.Errorf("cannot revert in %s format: %w", d.Format, err)
 	}
-	desired, err := Parse(d.Format, encoded)
+	desired, err := d.parse(d.Format, encoded)
 	if err != nil {
 		return nil, fmt.Errorf("revert rejected; source unchanged: %w", err)
 	}

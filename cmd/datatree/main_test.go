@@ -32,3 +32,30 @@ func TestApplicationArguments(t *testing.T) {
 		}
 	}
 }
+
+func TestCLIDocumentLimitFlags(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "data.json")
+	if err := os.WriteFile(path, []byte(`{"a":1,"b":2}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := application([]string{"-max-file-size-mb", "20", "-max-nodes", "5", path}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := application([]string{"-max-nodes", "4", path}); err == nil || !strings.Contains(err.Error(), "4") {
+		t.Fatalf("configured startup limit ignored: %v", err)
+	}
+	for _, args := range [][]string{{"-max-file-size-mb", "0"}, {"-max-file-size-mb", "-1"}, {"-max-nodes", "0"}, {"-max-nodes", "-1"}} {
+		if _, _, err := application(args); err == nil {
+			t.Fatalf("accepted invalid limits: %v", args)
+		}
+	}
+	if err := os.WriteFile(path, []byte(`"`+strings.Repeat("x", 1024*1024)+`"`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := application([]string{"-max-file-size-mb", "1", path}); err == nil || !strings.Contains(err.Error(), "1048576") {
+		t.Fatalf("configured byte limit ignored: %v", err)
+	}
+	if _, _, err := application([]string{"-max-file-size-mb", "2", path}); err != nil {
+		t.Fatal(err)
+	}
+}

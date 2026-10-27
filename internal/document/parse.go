@@ -15,8 +15,8 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-const MaxBytes = 10 * 1024 * 1024
-const MaxNodes = 100000
+const MaxBytes = 20 * 1024 * 1024
+const MaxNodes = 1000000
 const MaxDepth = 256
 
 type Node struct {
@@ -41,11 +41,20 @@ type Document struct {
 	Nodes   map[string]*Node
 	raw     *yaml.Node
 	headers []string
+	limits  Limits
 }
 
 func Parse(format string, source []byte) (*Document, error) {
-	if len(source) > MaxBytes {
-		return nil, errors.New("file exceeds 10 MB")
+	return ParseWithLimits(format, source, DefaultLimits())
+}
+
+func ParseWithLimits(format string, source []byte, limits Limits) (*Document, error) {
+	limits = limits.Normalized()
+	if err := limits.Validate(); err != nil {
+		return nil, err
+	}
+	if len(source) > limits.MaxBytes {
+		return nil, fmt.Errorf("file exceeds configured size limit (%d bytes)", limits.MaxBytes)
 	}
 	if !utf8.Valid(source) {
 		return nil, errors.New("input must be UTF-8")
@@ -54,12 +63,12 @@ func Parse(format string, source []byte) (*Document, error) {
 	if format == "yml" {
 		format = "yaml"
 	}
-	d := &Document{Format: format, Source: bytes.Clone(source), Nodes: map[string]*Node{}}
+	d := &Document{Format: format, Source: bytes.Clone(source), Nodes: map[string]*Node{}, limits: limits}
 	var root *yaml.Node
 	switch format {
 	case "json":
 		var err error
-		root, err = parseJSON(source)
+		root, err = parseJSON(source, limits)
 		if err != nil {
 			return nil, err
 		}
@@ -92,7 +101,7 @@ func Parse(format string, source []byte) (*Document, error) {
 			if len(bytes.TrimSpace(line)) == 0 {
 				continue
 			}
-			n, err := parseJSON(line)
+			n, err := parseJSON(line, limits)
 			if err != nil {
 				return nil, fmt.Errorf("line %d: %w", i+1, err)
 			}
@@ -131,7 +140,7 @@ func Parse(format string, source []byte) (*Document, error) {
 	default:
 		return nil, errors.New("format must be json, jsonl, yaml or csv")
 	}
-	if err := validateRaw(root); err != nil {
+	if err := validateRaw(root, limits); err != nil {
 		return nil, err
 	}
 	d.raw = root
@@ -141,8 +150,8 @@ func Parse(format string, source []byte) (*Document, error) {
 	var build func(*yaml.Node, *Node, *yaml.Node, string, string, int) (*Node, error)
 	build = func(raw *yaml.Node, parent *Node, key *yaml.Node, label, path string, depth int) (*Node, error) {
 		count++
-		if count > MaxNodes {
-			return nil, fmt.Errorf("document exceeds %d nodes", MaxNodes)
+		if count > limits.MaxNodes {
+			return nil, fmt.Errorf("document exceeds configured node limit (%d)", limits.MaxNodes)
 		}
 		if depth > MaxDepth {
 			return nil, fmt.Errorf("document exceeds depth %d", MaxDepth)
@@ -262,15 +271,15 @@ func shiftLines(n *yaml.Node, delta int) {
 		shiftLines(c, delta)
 	}
 }
-func parseJSON(b []byte) (*yaml.Node, error) {
+func parseJSON(b []byte, limits Limits) (*yaml.Node, error) {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.UseNumber()
 	budget := 0
 	var read func(int) (*yaml.Node, error)
 	read = func(depth int) (*yaml.Node, error) {
 		budget++
-		if budget > MaxNodes {
-			return nil, errors.New("JSON exceeds parsed node limit")
+		if budget > limits.MaxNodes {
+			return nil, fmt.Errorf("JSON exceeds parsed node limit (%d; object keys also count)", limits.MaxNodes)
 		}
 		if depth > MaxDepth {
 			return nil, errors.New("JSON depth exceeds 256")
@@ -292,8 +301,8 @@ func parseJSON(b []byte) (*yaml.Node, error) {
 						return nil, err
 					}
 					budget++
-					if budget > MaxNodes {
-						return nil, errors.New("JSON exceeds parsed node limit")
+					if budget > limits.MaxNodes {
+						return nil, fmt.Errorf("JSON exceeds parsed node limit (%d; object keys also count)", limits.MaxNodes)
 					}
 					k, ok := kt.(string)
 					if !ok {
@@ -421,13 +430,13 @@ func offset(b []byte, lines []int, columns map[int][]int, line, col int) int {
 	return p
 }
 
-func validateRaw(root *yaml.Node) error {
+func validateRaw(root *yaml.Node, limits Limits) error {
 	count := 0
 	var visit func(*yaml.Node, int) error
 	visit = func(n *yaml.Node, depth int) error {
 		count++
-		if count > MaxNodes {
-			return errors.New("document exceeds 100000 parsed nodes")
+		if count > limits.MaxNodes {
+			return fmt.Errorf("document exceeds parsed node limit (%d; mapping keys also count)", limits.MaxNodes)
 		}
 		if depth > MaxDepth+1 {
 			return errors.New("document exceeds depth 256")

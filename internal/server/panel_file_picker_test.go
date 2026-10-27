@@ -77,7 +77,7 @@ func TestPanelFilePickerLimits(t *testing.T) {
 	for _, fixture := range []struct {
 		endpoint string
 		limit    int
-	}{{"/api/schema", 1024 * 1024}, {"/api/diff-baseline", 10 * 1024 * 1024}} {
+	}{{"/api/schema", 1024 * 1024}, {"/api/diff-baseline", 20 * 1024 * 1024}} {
 		path := filepath.Join(dir, "oversized.json")
 		if err := os.WriteFile(path, []byte("{}"), 0600); err != nil {
 			t.Fatal(err)

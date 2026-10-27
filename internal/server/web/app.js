@@ -186,6 +186,9 @@ async function select(id, guard = true, syncSource = true) {
   }
   selection = id;
   tree.selected = id;
+  document.querySelectorAll('#node-list button[data-node-id]').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.nodeId === id));
+  });
   const node = records.get(id) || tree.graph.cards
     .flatMap((card) => [card, ...card.rows]).find((node) => node.id === id);
   $("selection-expansion").hidden = !node ||
@@ -240,10 +243,15 @@ const tree = new TreeCanvas($("canvas"), {
     for (const c of graph.cards) {
       for (const n of [c, ...c.rows]) {
         const b = document.createElement("button");
+        b.dataset.nodeId = n.id;
+        b.setAttribute('aria-pressed', String(n.id === selection));
         const badge = diffBadge(tree.diffMarks?.[n.id]);
         const validation = validationBadge(tree.validationMarks?.[n.id]);
         b.textContent = `${"· ".repeat(c.depth)}${validation ? validation.label + " · " : ""}${badge ? badge.label + " · " : ""}${n.label} (${n.kind})`;
-        b.addEventListener("click", () => select(n.id));
+        b.addEventListener("click", async () => {
+          await select(n.id);
+          if (selection === n.id) tree.focus(n.id);
+        });
         b.addEventListener("dblclick", () => {
           if (["object", "array", "stream"].includes(n.kind))
             void action({ type: "toggle", id: n.id });

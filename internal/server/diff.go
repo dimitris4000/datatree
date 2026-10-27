@@ -60,7 +60,7 @@ func (s *browserSession) replaceDiffBaseline(w http.ResponseWriter, format, text
 		fail(w, errors.New("stale revision; refresh comparison"))
 		return
 	}
-	base, err := document.Parse(format, []byte(text))
+	base, err := s.data.Parse(format, []byte(text))
 	if err != nil {
 		fail(w, err)
 		return
@@ -86,7 +86,7 @@ func (s *browserSession) replaceDiffBaselineFromPath(w http.ResponseWriter, path
 		fail(w, errors.New("stale revision; refresh comparison"))
 		return
 	}
-	resolved, data, err := readLocalInput(path, document.MaxBytes)
+	resolved, data, err := readLocalInput(path, s.data.Limits.Normalized().MaxBytes)
 	if err != nil {
 		fail(w, fmt.Errorf("load comparison %q: %w", path, err))
 		return
@@ -114,7 +114,7 @@ func (s *browserSession) diffBaseline(kind string) (*document.Document, diffBase
 	filename := s.filename
 	switch kind {
 	case "original":
-		base, err = document.Parse(s.data.OriginalFormat, s.data.Original)
+		base, err = s.data.Parse(s.data.OriginalFormat, s.data.Original)
 	case "file":
 		base = s.comparison
 		filename = s.comparisonFilename

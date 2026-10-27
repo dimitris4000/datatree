@@ -15,9 +15,13 @@ type Session struct {
 	OriginalFormat string
 	Revision       int
 	undo, redo     []snapshot
+	Limits         Limits
 }
 
-func NewSession() *Session { return &Session{} }
+func NewSession(options ...Limits) *Session { return &Session{Limits: limitOption(options)} }
+func (s *Session) Parse(format string, source []byte) (*Document, error) {
+	return ParseWithLimits(format, source, s.Limits)
+}
 func (s *Session) check(rev int) error {
 	if rev != s.Revision {
 		return errors.New("stale revision; reload the current document before editing")
@@ -28,7 +32,7 @@ func (s *Session) Import(format string, source []byte, revision int) error {
 	if err := s.check(revision); err != nil {
 		return err
 	}
-	d, err := Parse(format, source)
+	d, err := s.Parse(format, source)
 	if err != nil {
 		return err
 	}
@@ -78,7 +82,7 @@ func (s *Session) Apply(format string, text []byte, rev int) error {
 	if format != s.Doc.Format {
 		return errors.New("use explicit conversion to change format")
 	}
-	next, err := Parse(format, text)
+	next, err := s.Parse(format, text)
 	if err != nil {
 		return err
 	}
@@ -105,7 +109,7 @@ func (s *Session) ConvertWithSave(format string, rev int, save func([]byte) erro
 	if err != nil {
 		return err
 	}
-	next, err := Parse(format, b)
+	next, err := s.Parse(format, b)
 	if err != nil {
 		return err
 	}
@@ -144,7 +148,7 @@ func (s *Session) History(direction string, rev int) error {
 		return errors.New("no history in that direction")
 	}
 	previous := (*from)[len(*from)-1]
-	d, err := Parse(previous.format, previous.source)
+	d, err := s.Parse(previous.format, previous.source)
 	if err != nil {
 		return err
 	}

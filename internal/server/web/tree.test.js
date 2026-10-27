@@ -21,6 +21,19 @@ const obj = (id, label, children) => ({
   children,
 });
 
+test('focusing an attribute centers its row in a tall card without changing zoom',()=>{
+ const rows=Array.from({length:20},(_,i)=>scalar(String(i),'field'+i,'value'));
+ const card={id:'object',x:100,y:80,w:250,h:500,rows};
+ const tree=Object.create(TreeCanvas.prototype);
+ Object.assign(tree,{graph:{cards:[card]},width:600,height:200,view:{x:0,y:0,scale:0.75},draw(){}});
+ tree.focus('19');
+ const rowCenter=80+40+19*23+23/2;
+ assert.equal(rowCenter*tree.view.scale+tree.view.y,100);
+ assert.equal(tree.view.scale,0.75);
+ tree.focus('object');
+ assert.ok(80*tree.view.scale+tree.view.y>=0,'selected card header must stay visible');
+});
+
 test("collapse all closes the selected subtree including hidden and off-page descendants", () => {
   const ranges = [
     { id: "root" }, { id: "selected", parent: "root" },

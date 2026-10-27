@@ -18,7 +18,7 @@ func (d *Document) JSON(id string, allowLoss bool) (string, error) {
 	if n == nil {
 		return "", errors.New("node not found")
 	}
-	b, err := jsonBytes(n.raw, allowLoss)
+	b, err := jsonBytes(n.raw, allowLoss, d.Limits())
 	if err != nil {
 		return "", err
 	}
@@ -28,15 +28,16 @@ func (d *Document) JSON(id string, allowLoss bool) (string, error) {
 	}
 	return pretty.String(), nil
 }
-func jsonBytes(n *yaml.Node, allowLoss bool) ([]byte, error) {
+func jsonBytes(n *yaml.Node, allowLoss bool, options ...Limits) ([]byte, error) {
+	limits := limitOption(options)
 	var out bytes.Buffer
 	visiting := map[*yaml.Node]bool{}
 	count := 0
-	merges := newMergeResolver()
+	merges := newMergeResolver(limits)
 	var write func(*yaml.Node, int) error
 	write = func(n *yaml.Node, depth int) error {
 		count++
-		if count > MaxNodes || depth > MaxDepth || out.Len() > MaxBytes {
+		if count > limits.MaxNodes || depth > MaxDepth || out.Len() > limits.MaxBytes {
 			return errors.New("conversion exceeds document limits")
 		}
 		if visiting[n] {
@@ -149,24 +150,25 @@ func jsonBytes(n *yaml.Node, allowLoss bool) ([]byte, error) {
 	if err := write(n, 0); err != nil {
 		return nil, err
 	}
-	if out.Len() > MaxBytes {
-		return nil, errors.New("conversion exceeds 10 MB")
+	if out.Len() > limits.MaxBytes {
+		return nil, fmt.Errorf("conversion exceeds configured size limit (%d bytes)", limits.MaxBytes)
 	}
 	return out.Bytes(), nil
 }
 
 type mergeResolver struct {
-	seen map[*yaml.Node]bool
-	memo map[*yaml.Node][][2]*yaml.Node
-	work int
+	seen    map[*yaml.Node]bool
+	memo    map[*yaml.Node][][2]*yaml.Node
+	work    int
+	maxWork int
 }
 
-func newMergeResolver() *mergeResolver {
-	return &mergeResolver{seen: map[*yaml.Node]bool{}, memo: map[*yaml.Node][][2]*yaml.Node{}}
+func newMergeResolver(options ...Limits) *mergeResolver {
+	return &mergeResolver{seen: map[*yaml.Node]bool{}, memo: map[*yaml.Node][][2]*yaml.Node{}, maxWork: limitOption(options).MaxNodes}
 }
 func (r *mergeResolver) entries(n *yaml.Node) ([][2]*yaml.Node, error) {
 	r.work++
-	if r.work > MaxNodes {
+	if r.work > r.maxWork {
 		return nil, errors.New("merge expansion exceeds document work limit")
 	}
 	if n == nil {
@@ -215,7 +217,7 @@ func (r *mergeResolver) entries(n *yaml.Node) ([][2]*yaml.Node, error) {
 			}
 			for _, p := range entries {
 				r.work++
-				if r.work > MaxNodes {
+				if r.work > r.maxWork {
 					return nil, errors.New("merge expansion exceeds document work limit")
 				}
 				if !used[p[0].Value] {
@@ -263,7 +265,7 @@ func (d *Document) conversionBytes(format string) ([]byte, error) {
 	if format == "yaml" && d.Format != "yaml" {
 		return marshalBlockYAML(d.raw)
 	}
-	return encode(format, d.raw, nil)
+	return encode(format, d.raw, nil, d.Limits())
 }
 
 func marshalYAML(n *yaml.Node) ([]byte, error) {
@@ -284,12 +286,13 @@ func marshalYAML(n *yaml.Node) ([]byte, error) {
 	err := e.Close()
 	return b.Bytes(), err
 }
-func encode(format string, n *yaml.Node, headers []string) ([]byte, error) {
+func encode(format string, n *yaml.Node, headers []string, options ...Limits) ([]byte, error) {
+	limits := limitOption(options)
 	switch format {
 	case "yaml":
 		return marshalYAML(n)
 	case "json":
-		b, err := jsonBytes(n, true)
+		b, err := jsonBytes(n, true, limits)
 		if err != nil {
 			return nil, err
 		}
@@ -305,7 +308,7 @@ func encode(format string, n *yaml.Node, headers []string) ([]byte, error) {
 		}
 		var b bytes.Buffer
 		for _, c := range n.Content {
-			j, err := jsonBytes(c, true)
+			j, err := jsonBytes(c, true, limits)
 			if err != nil {
 				return nil, err
 			}

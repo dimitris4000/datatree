@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"datatree/internal/document"
 )
 
 func readLocalInput(path string, limit int) (string, []byte, error) {
@@ -30,7 +28,7 @@ func readLocalInput(path string, limit int) (string, []byte, error) {
 		return "", nil, errors.New("choose a regular file")
 	}
 	if info.Size() > int64(limit) {
-		return "", nil, fmt.Errorf("file exceeds %d MiB", limit/(1024*1024))
+		return "", nil, fmt.Errorf("file exceeds configured size limit (%d bytes / %g MiB)", limit, float64(limit)/(1024*1024))
 	}
 	file, err := os.Open(path)
 	if err != nil {
@@ -42,7 +40,7 @@ func readLocalInput(path string, limit int) (string, []byte, error) {
 		return "", nil, err
 	}
 	if len(data) > limit {
-		return "", nil, fmt.Errorf("file exceeds %d MiB", limit/(1024*1024))
+		return "", nil, fmt.Errorf("file exceeds configured size limit (%d bytes / %g MiB)", limit, float64(limit)/(1024*1024))
 	}
 	return path, data, nil
 }
@@ -81,20 +79,21 @@ func (s *browserSession) openLocal(path string, revision int) error {
 	default:
 		return errors.New("choose a JSON, JSONL, YAML or CSV file")
 	}
-	if info.Size() > document.MaxBytes {
-		return errors.New("file exceeds 10 MiB")
+	limit := s.data.Limits.Normalized().MaxBytes
+	if info.Size() > int64(limit) {
+		return fmt.Errorf("file exceeds configured size limit (%d bytes / %g MiB)", limit, float64(limit)/(1024*1024))
 	}
 	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, document.MaxBytes+1))
+	data, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
 	if err != nil {
 		return err
 	}
-	if len(data) > document.MaxBytes {
-		return errors.New("file exceeds 10 MiB")
+	if len(data) > limit {
+		return fmt.Errorf("file exceeds configured size limit (%d bytes / %g MiB)", limit, float64(limit)/(1024*1024))
 	}
 	schema, err := readCompanionSchema(schemaPath, s.schemaGeneration+1)
 	if err != nil {

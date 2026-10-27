@@ -329,8 +329,11 @@ export class TreeCanvas {
       (c) => c.id === id || c.rows.some((r) => r.id === id),
     );
     if (card) {
+      const row = card.rows.findIndex(r => r.id === id);
+      const centerY = row >= 0 ? card.y + 40 + row * 23 + 23 / 2
+        : card.y + Math.min(card.h, 66) / 2;
       this.view.x = this.width / 2 - (card.x + card.w / 2) * this.view.scale;
-      this.view.y = this.height / 2 - (card.y + card.h / 2) * this.view.scale;
+      this.view.y = this.height / 2 - centerY * this.view.scale;
       this.draw();
     }
   }
@@ -399,6 +402,8 @@ export class TreeCanvas {
         c.y * scale + y > this.height
       )
         continue;
+      const selectedCard = this.selected === c.id;
+      const selectedRow = c.rows.some(row => row.id === this.selected);
       rounded(ctx, c.x, c.y, c.w, c.h);
       ctx.fillStyle = "#ffffff";
       ctx.shadowColor = "#1f3e2410";
@@ -407,8 +412,8 @@ export class TreeCanvas {
       ctx.fill();
       ctx.shadowBlur = 0;
       ctx.shadowOffsetY = 0;
-      ctx.strokeStyle = this.selected === c.id ? "#64846e" : "#a7b5a5";
-      ctx.lineWidth = this.selected === c.id ? 2 : 1;
+      ctx.strokeStyle = "#a7b5a5";
+      ctx.lineWidth = 1;
       ctx.stroke();
       ctx.save();
       rounded(ctx, c.x, c.y, c.w, c.h);
@@ -416,7 +421,7 @@ export class TreeCanvas {
       const badge = diffBadge(this.diffMarks?.[c.id]);
       const validation = validationBadge(this.validationMarks?.[c.id]);
       const titleY = c.y + (badge || validation ? 17 : 22);
-      ctx.fillStyle = badge?.background || "#f0f4ec";
+      ctx.fillStyle = selectedCard ? "#dbeafe" : badge?.background || "#f0f4ec";
       ctx.fillRect(c.x, c.y, c.w, 35);
       if (badge) {
         ctx.font = `${validation ? 8 : 9}px ui-monospace, SFMono-Regular, Menlo, monospace`;
@@ -439,7 +444,7 @@ export class TreeCanvas {
         c.x + 11,
         titleY,
       );
-      ctx.fillStyle = "#b67943";
+      ctx.fillStyle = selectedCard ? "#173f80" : "#b67943";
       ctx.font = "bold 12px ui-monospace, SFMono-Regular, Menlo, monospace";
       ctx.fillText(
         short(c.label, Math.max(8, Math.floor((c.w - 85) / 7))),
@@ -463,12 +468,17 @@ export class TreeCanvas {
           ctx.fillRect(c.x + 1, top, c.w - 2, 23);
         }
         if (this.selected === r.id) {
-          ctx.fillStyle = "#e9f1df";
+          ctx.fillStyle = "#dbeafe";
           ctx.fillRect(c.x + 1, top, c.w - 2, 23);
+          ctx.fillStyle = "#1d4ed8";
+          ctx.fillRect(c.x + 1, top, 4, 23);
+          ctx.strokeStyle = "#1d4ed8";
+          ctx.lineWidth = 1.5 / scale;
+          ctx.strokeRect(c.x + 1, top, c.w - 2, 23);
         }
         ctx.font = "bold 11px ui-monospace, SFMono-Regular, Menlo, monospace";
         const key = (rowValidation ? "Error · " : "") + (rowBadge ? rowBadge.label + " · " : "") + short(r.label, rowBadge || rowValidation ? 12 : 22) + ": ";
-        ctx.fillStyle = rowValidation?.color || rowBadge?.color || "#8a639c";
+        ctx.fillStyle = rowValidation?.color || rowBadge?.color || (this.selected === r.id ? "#173f80" : "#8a639c");
         ctx.fillText(key, c.x + 13, top + 15);
         const kw = ctx.measureText(key).width;
         ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -499,6 +509,16 @@ export class TreeCanvas {
         );
       }
       ctx.restore();
+      if (selectedCard || selectedRow) {
+        // Screen-sized outlines keep the selection visible when zoomed out.
+        rounded(ctx, c.x, c.y, c.w, c.h);
+        ctx.strokeStyle = "#93c5fd";
+        ctx.lineWidth = 7 / scale;
+        ctx.stroke();
+        ctx.strokeStyle = "#1d4ed8";
+        ctx.lineWidth = (selectedCard ? 3 : 2) / scale;
+        ctx.stroke();
+      }
     }
     ctx.restore();
     this.callbacks.zoom?.(Math.round(scale * 100));

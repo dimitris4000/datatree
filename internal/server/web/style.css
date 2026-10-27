@@ -73,6 +73,13 @@ summary:focus-visible,
 .primary:hover {
   background: #254b3a;
 }
+#node-list button[aria-pressed="true"] {
+  background: #1d4ed8;
+  border-color: #173f80;
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 0 0 2px #bfdbfe;
+}
 .toolbar-actions,
 .button-row {
   display: flex;
@@ -456,7 +463,6 @@ input[type="checkbox"] {
   line-height: 1.5;
 }
 details {
-  border-top: 1px solid var(--line);
   padding: 14px 0;
 }
 summary {

@@ -100,10 +100,10 @@ func TestStartupFileRejectsUnreadableAndOversizedFiles(t *testing.T) {
 	if err := os.Chmod(path, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Truncate(path, 10*1024*1024+1); err != nil {
+	if err := os.Truncate(path, 20*1024*1024+1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewWithFile(path); err == nil || !strings.Contains(err.Error(), "10 MiB") || !strings.Contains(err.Error(), path) {
+	if _, err := NewWithFile(path); err == nil || !strings.Contains(err.Error(), "20 MiB") || !strings.Contains(err.Error(), path) {
 		t.Fatalf("oversized file: %v", err)
 	}
 }

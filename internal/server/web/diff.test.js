@@ -81,6 +81,13 @@ function panelDocument() {
  const elements = new Map(['toggle','panel','baseline','file','filename','refresh','status','counts','results','previous','next'].map(id => [`diff-${id}`, new Element()]));
  return { getElementById: id => elements.get(id), createElement: tag => new Element(tag), elements };
 }
+test('comparison selection uses the shared picker path and cancellation retains its baseline',async()=>{
+ const doc=panelDocument(),calls=[];let choice={path:'/data/baseline.yaml'};
+ const panel=mountDiffPanel(doc,{revision:()=>1,pickFile:async()=>choice,load:async()=>result(),upload:async(payload,revision)=>{calls.push({payload,revision});return result(revision,'file');},navigate:async()=>true,highlight(){}});
+ await panel.controller.setVisible(true);await doc.getElementById('diff-file').listeners.get('click')();
+ assert.deepEqual(calls,[{payload:{path:'/data/baseline.yaml'},revision:1}]);assert.equal(panel.controller.baseline,'file');
+ const prior=panel.controller.result;choice=null;await doc.getElementById('diff-file').listeners.get('click')();assert.equal(calls.length,1);assert.equal(panel.controller.result,prior);assert.equal(panel.controller.error,'');
+});
 test('panel renders explicit statuses and safe before/after text and hides marks on close', async () => {
  const doc = panelDocument(), $ = id => doc.getElementById(`diff-${id}`); let marks;
  const panel = mountDiffPanel(doc, { revision: () => 1, load: async () => result(), upload: async () => result(1, 'file'), navigate: async () => true, invalidate() {}, highlight: value => { marks = value; } });

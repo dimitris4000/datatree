@@ -35,8 +35,9 @@ export class ValidationController {
     try {
       if (!this.available()) throw new Error('Open a document first.');
       const payload = await read();
+      if (!payload) return;
       if (epoch !== this.documentEpoch || revision !== this.revision()) return;
-      if (new TextEncoder().encode(payload.text).length > 1024 * 1024) throw new Error('Schema exceeds 1 MiB.');
+      if (payload.text !== undefined && new TextEncoder().encode(payload.text).length > 1024 * 1024) throw new Error('Schema exceeds 1 MiB.');
       const response = await this.attach(payload, revision);
       if (epoch !== this.documentEpoch || revision !== this.revision()) return;
       if (response.revision !== revision) throw new Error('Document changed; attach the schema again.');
@@ -120,7 +121,7 @@ export function mountValidationPanel(document, dependencies) {
   controller = new ValidationController({ ...dependencies, render: state => {
     $('panel').hidden = !state.visible;
     $('toggle').setAttribute('aria-expanded', String(state.visible));
-    $('filename').textContent = state.schema ? `Schema: ${state.schema.filename}` : 'No schema attached. Upload or paste a JSON Schema.';
+    $('filename').textContent = state.schema ? `Schema: ${state.schema.filename}` : 'No schema attached. Choose or paste a JSON Schema.';
     $('clear').disabled = !state.schema || state.uploading;
     $('attach').disabled = $('file').disabled = state.uploading;
     $('run').disabled = !state.schema || state.loading || state.uploading;
@@ -151,13 +152,6 @@ export function mountValidationPanel(document, dependencies) {
   $('attach').addEventListener('click', () => controller.replace(async () => ({ filename: 'Pasted schema', text: $('text').value })));
   $('previous').addEventListener('click', () => controller.move(-1));
   $('next').addEventListener('click', () => controller.move(1));
-  $('file').addEventListener('change', async event => {
-    const file = event.target.files[0]; if (!file) return;
-    await controller.replace(async () => {
-      if (file.size > 1024 * 1024) throw new Error('Schema exceeds 1 MiB.');
-      return { filename: file.name, text: new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer()) };
-    });
-    event.target.value = '';
-  });
+  $('file').addEventListener('click', () => controller.replace(() => dependencies.pickFile()));
   return { controller, selectionChanged: () => renderInspector(controller) };
 }

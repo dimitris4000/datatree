@@ -112,9 +112,7 @@
               <option value="original">Original</option>
               <option value="file">Compare file</option>
             </select>
-            <label class="diff-file-label" for="diff-file">Choose comparison file
-              <input id="diff-file" type="file" accept=".json,.jsonl,.ndjson,.yaml,.yml,.csv" />
-            </label>
+            <button id="diff-file" type="button">Choose comparison file</button>
             <button id="diff-refresh" type="button">Refresh</button>
           </div>
           <p id="diff-filename" class="find-help">Original import</p>
@@ -128,8 +126,7 @@
         </section>
         <section id="validation-panel" class="validation-panel" aria-label="Schema validation" hidden>
           <p id="validation-filename" class="find-help">No schema attached.</p>
-          <label for="validation-file">Upload JSON Schema</label>
-          <input id="validation-file" type="file" accept=".json,.schema.json,application/json" />
+          <button id="validation-file" type="button">Choose JSON Schema</button>
           <details>
             <summary>Paste JSON Schema</summary>
             <textarea id="validation-text" rows="6" aria-label="JSON Schema" spellcheck="false" placeholder='{"type":"object"}'></textarea>
@@ -221,7 +218,7 @@
         <h2 id="open-document-title">Open file</h2>
         <button id="close-open-document" type="button" aria-label="Close">×</button>
       </div>
-      <p>Browse files on the computer running Data Tree. Matching schemas and Git context load automatically.</p>
+      <p id="file-browser-help">Browse files on the computer running Data Tree. Matching schemas and Git context load automatically.</p>
       <form id="file-browser-form" class="file-browser-navigation">
         <label for="file-browser-path">Directory</label>
         <div class="button-row">
@@ -239,7 +236,7 @@
         <input id="local-path" type="text" required placeholder="/path/to/data.json" aria-describedby="local-path-help" />
         <p id="local-path-help">JSON, JSONL, YAML and CSV. Relative file paths start from the CLI’s working directory.</p>
         <div class="button-row">
-          <button type="submit" class="primary">Open</button>
+          <button id="file-browser-open" type="submit" class="primary">Open</button>
         </div>
       </form>
     </dialog>

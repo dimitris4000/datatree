@@ -316,6 +316,7 @@ const diffPanel = mountDiffPanel(document, {
   invalidate: () => { sourceSync++; },
   load: (baseline, revision) => api(`/api/diff?${new URLSearchParams({ baseline, revision })}`),
   upload: (payload, revision) => api("/api/diff-baseline", { ...payload, revision }),
+  pickFile: () => fileBrowser.pick('comparison'),
   navigate: navigateNode,
   revert: async (payload, revision) => {
     if (!ready() || !canLeaveInspector()) return false;
@@ -336,6 +337,7 @@ const validationPanel = mountValidationPanel(document, {
   revision: () => state.revision,
   available: () => canValidateDocument(state),
   attach: (payload, revision) => api('/api/schema', { ...payload, revision }),
+  pickFile: () => fileBrowser.pick('schema'),
   clear: revision => api('/api/schema-clear', { revision }),
   validate: (revision, schemaToken) => api('/api/validate', { revision, schemaToken }),
   navigate: navigateNode,
@@ -468,6 +470,7 @@ const fileBrowser = mountFileBrowser(document, {
   revision: () => state.revision,
   browse: payload => api('/api/files', payload),
   ready: () => ready() && canLeaveInspector(),
+  canPick: () => !busy,
   open: async payload => {
     setBusy(true);
     try {

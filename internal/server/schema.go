@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -48,6 +49,7 @@ func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) {
 		Text        string `json:"text"`
 		Filename    string `json:"filename"`
 		SchemaToken string `json:"schemaToken"`
+		Path        string `json:"path"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, document.MaxSchemaBytes*6+4096)
 	decoder := json.NewDecoder(r.Body)
@@ -114,8 +116,25 @@ func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) {
 	var result document.ValidationResult
 	var compiled *document.CompiledSchema
 	var err error
+	schemaText, schemaFilename := []byte(in.Text), in.Filename
 	if r.URL.Path == "/api/schema" {
-		compiled, err = document.CompileSchema([]byte(in.Text))
+		if in.Path != "" {
+			if in.Text != "" {
+				fail(w, errors.New("choose a schema path or schema text, not both"))
+				return
+			}
+			var path string
+			path, schemaText, err = readLocalInput(in.Path, document.MaxSchemaBytes)
+			if err != nil {
+				fail(w, fmt.Errorf("load schema %q: %w", in.Path, err))
+				return
+			}
+			schemaFilename = filepath.Base(path)
+		}
+		compiled, err = document.CompileSchema(schemaText)
+		if err != nil && in.Path != "" {
+			err = fmt.Errorf("load schema %q: %w", in.Path, err)
+		}
 	} else {
 		var snapshot *document.Document
 		snapshot, err = document.Parse(format, source)
@@ -145,7 +164,7 @@ func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if compiled != nil {
 		session.schemaGeneration++
-		session.schema = newAttachedSchema(compiled, []byte(in.Text), in.Filename, session.schemaGeneration)
+		session.schema = newAttachedSchema(compiled, schemaText, schemaFilename, session.schemaGeneration)
 		writeJSON(w, map[string]any{"revision": *in.Revision, "schema": session.schema.metadata})
 		return
 	}

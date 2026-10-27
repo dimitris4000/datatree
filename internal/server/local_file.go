@@ -14,6 +14,39 @@ import (
 	"datatree/internal/document"
 )
 
+func readLocalInput(path string, limit int) (string, []byte, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", nil, errors.New("enter a local file path")
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", nil, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return "", nil, errors.New("choose a regular file")
+	}
+	if info.Size() > int64(limit) {
+		return "", nil, fmt.Errorf("file exceeds %d MiB", limit/(1024*1024))
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", nil, err
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
+	if err != nil {
+		return "", nil, err
+	}
+	if len(data) > limit {
+		return "", nil, fmt.Errorf("file exceeds %d MiB", limit/(1024*1024))
+	}
+	return path, data, nil
+}
+
 func (s *browserSession) openLocal(path string, revision int) error {
 	if revision != s.data.Revision {
 		return errors.New("stale revision; refresh the current document")

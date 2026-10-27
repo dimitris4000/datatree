@@ -66,6 +66,7 @@ export class DiffController {
     this.render(this);
     try {
       const payload = await read();
+      if (!payload) return;
       if (this.revision() !== revision) throw new Error('Document changed; choose the comparison file again.');
       const result = await this.upload(payload, revision);
       if (this.revision() !== revision) return;
@@ -206,17 +207,6 @@ export function mountDiffPanel(document, dependencies) {
   $('baseline').addEventListener('change', () => controller.refresh($('baseline').value));
   $('previous').addEventListener('click', () => controller.move(-1));
   $('next').addEventListener('click', () => controller.move(1));
-  $('file').addEventListener('change', async event => {
-    const file = event.target.files[0];
-    if (!file) return;
-    await controller.replace(async () => {
-      if (file.size > 10 * 1024 * 1024) throw new Error('Comparison file exceeds 10 MiB.');
-      const ext = file.name.split('.').pop().toLowerCase();
-      const format = ext === 'yml' ? 'yaml' : ext === 'ndjson' ? 'jsonl' : ext;
-      if (!['json', 'yaml', 'jsonl', 'csv'].includes(format)) throw new Error('Choose a JSON, JSONL, YAML or CSV comparison file.');
-      return { filename: file.name, format, text: new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer()) };
-    });
-    event.target.value = '';
-  });
+  $('file').addEventListener('click', () => controller.replace(() => dependencies.pickFile()));
   return { controller };
 }

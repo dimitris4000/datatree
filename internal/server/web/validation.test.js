@@ -52,6 +52,14 @@ function panelDocument(){
  class Element{constructor(tag){this.tagName=tag;this.children=[];this.listeners=new Map();this.attributes=new Map();this.classList={toggle(){}};this.value='';this.hidden=false;this.disabled=false;}addEventListener(e,f){this.listeners.set(e,f);}append(...nodes){this.children.push(...nodes);}replaceChildren(...nodes){this.children=nodes;}setAttribute(k,v){this.attributes.set(k,v);}set innerHTML(_){throw new Error('unsafe HTML');}}
  const elements=new Map(['toggle','panel','file','filename','text','attach','clear','run','status','results','previous','next','inspector'].map(id=>['validation-'+id,new Element()]));return {getElementById:id=>elements.get(id),createElement:tag=>new Element(tag)};
 }
+test('schema selection uses the shared picker path and cancellation retains validation results',async()=>{
+ const doc=panelDocument(),calls=[];let choice={path:'/data/rules.json'};
+ const panel=mountValidationPanel(doc,{revision:()=>1,pickFile:async()=>choice,attach:async(payload,revision)=>{calls.push({payload,revision});return {revision,schema:metadata};},clear:async()=>({revision:1,schema:null}),validate:async()=>result(),navigate:async()=>true,highlight(){},selected:()=> '2'});
+ await doc.getElementById('validation-file').listeners.get('click')();
+ assert.deepEqual(calls,[{payload:{path:'/data/rules.json'},revision:1}]);assert.equal(panel.controller.schema.token,'s1');
+ await panel.controller.run();const prior=panel.controller.result;choice=null;
+ await doc.getElementById('validation-file').listeners.get('click')();assert.equal(calls.length,1);assert.equal(panel.controller.result,prior);assert.equal(panel.controller.error,'');
+});
 test('panel safely renders errors, suggestions, Inspector details and stale/hidden marks',async()=>{
  const doc=panelDocument(),$=id=>doc.getElementById('validation-'+id);let marks;
  const panel=mountValidationPanel(doc,{revision:()=>1,attach:async()=>({revision:1,schema:metadata}),clear:async()=>({revision:1,schema:null}),validate:async()=>result(),navigate:async()=>true,highlight:m=>marks=m,selected:()=> '2'});

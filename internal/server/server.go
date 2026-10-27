@@ -266,7 +266,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			err = session.revertDiff(in.Baseline, in.BaselineToken, *in.ChangeIndex, in.Revision)
 		}
 	case "/api/diff-baseline":
-		session.replaceDiffBaseline(w, in.Format, in.Text, in.Filename, in.Revision)
+		if in.Path != "" {
+			session.replaceDiffBaselineFromPath(w, in.Path, in.Revision)
+		} else {
+			session.replaceDiffBaseline(w, in.Format, in.Text, in.Filename, in.Revision)
+		}
 		return
 	case "/api/apply":
 		err = d.Apply(in.Format, []byte(in.Text), in.Revision)

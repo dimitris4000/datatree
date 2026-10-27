@@ -4,7 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"datatree/internal/document"
 )
@@ -72,6 +75,30 @@ func (s *browserSession) replaceDiffBaseline(w http.ResponseWriter, format, text
 	s.comparison = base
 	s.comparisonFilename = filename
 	writeJSON(w, diffResponse{result, s.data.Revision, baselineMetadata("file", filename, base)})
+}
+
+func (s *browserSession) replaceDiffBaselineFromPath(w http.ResponseWriter, path string, revision int) {
+	if s.data.Doc == nil {
+		fail(w, errors.New("open a file first"))
+		return
+	}
+	if revision != s.data.Revision {
+		fail(w, errors.New("stale revision; refresh comparison"))
+		return
+	}
+	resolved, data, err := readLocalInput(path, document.MaxBytes)
+	if err != nil {
+		fail(w, fmt.Errorf("load comparison %q: %w", path, err))
+		return
+	}
+	format := strings.ToLower(strings.TrimPrefix(filepath.Ext(resolved), "."))
+	if format == "yml" {
+		format = "yaml"
+	}
+	if format == "ndjson" {
+		format = "jsonl"
+	}
+	s.replaceDiffBaseline(w, format, string(data), filepath.Base(resolved), revision)
 }
 
 func baselineMetadata(kind, filename string, base *document.Document) diffBaseline {

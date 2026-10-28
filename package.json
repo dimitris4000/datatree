@@ -1,6 +1,7 @@
 {
   "name": "datatree-ui-checks",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "test": "node --test internal/server/web/*.test.js",

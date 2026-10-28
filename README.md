@@ -4,7 +4,9 @@ A local Go web application for exploring and editing JSON, JSONL, YAML and CSV a
 
 ## Run
 
-Requires Go 1.23 or newer. Go dependencies and htmx 1.9.10 are vendored.
+Requires Go 1.23 or newer. Go dependencies and browser assets are checked in; Node.js is only needed for frontend development.
+
+From a cloned checkout:
 
 ```sh
 go run ./cmd/datatree
@@ -15,7 +17,7 @@ Open **http://127.0.0.1:8080**. Use **Load example**, **Open file**, or paste so
 Pass an optional file argument to load it at startup:
 
 ```sh
-go run ./cmd/datatree -listen 127.0.0.1:8090 ./data.yaml
+go run ./cmd/datatree -listen 127.0.0.1:8090 samples/projects.yaml
 ```
 
 For a compiled binary, use `datatree [flags] [file]`. JSON, JSONL/NDJSON, YAML/YML and CSV are supported. Paths are relative to the process's working directory unless absolute; quote paths containing spaces. Put flags before the file argument. Missing or unreadable files, directories, unsupported extensions, invalid UTF-8, oversized files and malformed documents stop startup before listening, with a nonzero exit status and an error naming the file and cause. Each new browser session starts from the validated startup snapshot with independent edits/history. Omitting the file starts an empty workspace.
@@ -32,15 +34,18 @@ Opening `XXX.YYY` by CLI argument or the WebUI’s local path also checks for `X
 
 **Open file** uses a custom file browser backed by the running CLI process. Browse directories, select a supported file, then choose **Open**, or double-click the file. The picker fills in its full server path and automatically loads a matching schema. **Up**, the editable directory path and **Show hidden files** help navigate. It starts beside the currently opened local file, or in the CLI’s working directory. Files are on the computer running Data Tree, which may differ from the computer displaying the browser. You can also enter an exact file path directly.
 
-### Enable p5.js
-
-The project uses a p5.js canvas when p5 is available, with a native Canvas 2D fallback for an offline checkout. This development environment could not download p5.js, so its distribution is **not included**. To install the pinned p5.js 1.11.11 distribution:
+### Build a binary
 
 ```sh
-./scripts/vendor-p5.sh
+go build -o bin/datatree ./cmd/datatree
+./bin/datatree samples/projects.json
 ```
 
-Restart/rebuild the Go server afterward: frontend assets are embedded at build time. The script downloads only the library and license from public distribution URLs; application files are never sent externally. Once vendored, the entire app runs without network access. The same layout, drawing, hit detection and interactions serve both rendering backends. Real p5/browser integration still needs verification in a browser-enabled environment.
+The `samples/` directory includes JSON, JSONL, YAML and CSV examples with companion JSON Schemas.
+
+### Browser assets
+
+The checkout includes p5.js 1.11.11, htmx 1.9.10 and the bundled CodeMirror editor. The app runs without runtime network access. A native Canvas 2D fallback is used if p5.js is unavailable. To refresh the pinned p5.js distribution and its license, run `./scripts/vendor-p5.sh`, then rebuild/restart the Go server.
 
 ## Use
 
@@ -216,7 +221,7 @@ go vet ./...
 npm test
 ```
 
-The checked-in frontend bundle lets the Go application run without Node or runtime network access. Frontend development requires Node.js 24+ and a dependency installation:
+The checked-in frontend bundle lets the Go application run without Node or runtime network access. Frontend development requires a Node.js version supported by `package.json` (Node.js 24.15+ in the 24.x line is recommended) and a dependency installation:
 
 ```sh
 npm ci
@@ -238,3 +243,13 @@ Chromium checks exercise bounded editor rendering, typing, scrolling, search/nav
 - `docs/implementation.md`: implementation decisions and verification boundaries.
 
 Third-party notices are included under `vendor/` and `internal/server/web/vendor/`.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and review checks, and [SECURITY.md](SECURITY.md) for the local trust model and vulnerability reporting. CI runs Go tests, race checks, vet, frontend tests, bundle reproducibility, and Chromium checks with generated fixtures. Large-file performance qualification remains a separate workflow.
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependency licenses and [the publication checklist](docs/publication-checklist.md) before publishing.
+
+## License
+
+[MIT](LICENSE). Bundled dependencies retain their [own licenses](THIRD_PARTY_NOTICES.md).

@@ -1,3 +1,29 @@
 /.cache/
 /bin/
 /node_modules/
+
+# Local builds, test output and profiling data
+/datatree
+/datatree.exe
+/coverage.out
+/coverage.html
+*.test
+*.prof
+*.pprof
+/test-results/
+/playwright-report/
+/blob-report/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

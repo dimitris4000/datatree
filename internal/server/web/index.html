@@ -73,10 +73,11 @@
       <section id="tree-pane" class="pane">
         <div class="pane-heading">
           <h1>Tree view</h1>
+          <button id="find-toggle" type="button" aria-expanded="false" aria-controls="find-panel">Search</button>
           <button id="diff-toggle" type="button" aria-expanded="false" aria-controls="diff-panel">Changes</button>
           <button id="validation-toggle" type="button" aria-expanded="false" aria-controls="validation-panel">Validation</button>
         </div>
-        <section class="find-panel" aria-label="Find nodes">
+        <section id="find-panel" class="find-panel" aria-label="Find nodes" hidden>
           <form id="find-form" class="find-form">
             <select id="find-mode" aria-label="Find mode">
               <option value="search">Search</option>

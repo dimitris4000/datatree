@@ -69,6 +69,9 @@ A scalar field's subtree is its value; its key belongs to the parent object. The
 
 ### Search and path queries
 
+The search panel starts hidden. Select **Search** beside **Changes** and
+**Validation** to show or hide it. Hiding the panel preserves its query and results.
+
 Use **Search** above the tree to find literal text in keys, scalar values, or both. Matching ignores case unless **Match case** is checked. Search includes collapsed branches and other pages, and supports JSON, JSONL, YAML and CSV. It searches parsed content, rather than source comments or formatting; complex YAML keys are searched through their scalar parts. Alias values are searchable as `*anchor` references without following them.
 
 Switch to **Path / query**, enter an expression and choose **Find**:

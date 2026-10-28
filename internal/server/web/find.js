@@ -173,6 +173,10 @@ export function mountFindPanel(document, dependencies) {
       "Applied document paths: $.services[0].name · $['a.b'] · $..name · $.services[*].name · $.services[?(@.replicas > 3)]. Apply or discard source drafts before navigating." :
       'Search the applied document, including collapsed branches. Apply or discard source drafts before navigating.';
   }
+  $('toggle').addEventListener('click', () => {
+    $('panel').hidden = !$('panel').hidden;
+    $('toggle').setAttribute('aria-expanded', String(!$('panel').hidden));
+  });
   $('form').addEventListener('submit', async event => {
     event.preventDefault();
     await controller.submit({ mode: $('mode').value, text: $('text').value,

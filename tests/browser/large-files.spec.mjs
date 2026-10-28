@@ -62,6 +62,7 @@ test('large document renders a bounded editor, accepts input and preserves undo'
  // paths so the public search/navigation/edit/undo workflow can be exercised.
  if(!input.provided){
   const path=input.format==='csv'?"$[0].name":input.format==='jsonl'?"$[0].settings.replicas":"$.rows[0].settings.replicas";
+  await page.locator('#find-toggle').click();
   await page.locator('#find-mode').selectOption('query');await page.locator('#find-text').fill(path);
   const begin=Date.now();await page.locator('#find-submit').click();
   await expect(page.locator('#inspector .selection-title')).toBeVisible();

@@ -1,5 +1,45 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { JSDOM } from 'jsdom';
+
+test('Search starts hidden and its heading toggle preserves searches across closing and reopening', async () => {
+  const { mountFindPanel } = await import('./find.js');
+  const dom = new JSDOM(await readFile(new URL('./index.html', import.meta.url), 'utf8'));
+  try {
+    const doc = dom.window.document;
+    const section = doc.querySelector('.find-panel');
+    const toggle = doc.querySelector('#tree-pane .pane-heading #find-toggle');
+    assert.equal(section.hidden, true);
+    assert.ok(toggle, 'Search toggle belongs beside Changes and Validation');
+    assert.equal(toggle.textContent, 'Search');
+    assert.equal(toggle.getAttribute('aria-controls'), section.id);
+    assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+    let loads = 0;
+    const { controller } = mountFindPanel(doc, {
+      revision: () => 1, navigate: async () => true,
+      load: async () => { loads++; return { revision: 1, matches: [match('found')], truncated: false }; },
+    });
+    toggle.click();
+    assert.equal(section.hidden, false);
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+    doc.getElementById('find-text').value = 'found';
+    await controller.submit({ mode: 'search', text: 'found', values: true });
+    toggle.click();
+    assert.equal(section.hidden, true);
+    assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+    toggle.click();
+    assert.equal(section.hidden, false);
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+    assert.equal(doc.getElementById('find-text').value, 'found');
+    assert.equal(doc.querySelectorAll('#find-results li').length, 1);
+    assert.equal(loads, 1, 'toggling must not execute a search');
+    assert.equal(doc.getElementById('diff-panel').hidden, true);
+    assert.equal(doc.getElementById('validation-panel').hidden, true);
+  } finally {
+    dom.window.close();
+  }
+});
 
 test('result pages stay bounded and can return to an earlier page', async () => {
  const {FindController}=await import('./find.js');
@@ -152,7 +192,7 @@ function panelDocument() {
     setAttribute(k, v) { this.attributes.set(k, v); }
     set innerHTML(_) { throw new Error('result content must be text'); }
   }
-  const elements = new Map(['form', 'mode', 'text', 'keys', 'values', 'case', 'options', 'help', 'status', 'results', 'submit', 'clear', 'previous', 'next','previous-page','next-page'].map(id => [`find-${id}`, new Element()]));
+  const elements = new Map(['toggle', 'panel', 'form', 'mode', 'text', 'keys', 'values', 'case', 'options', 'help', 'status', 'results', 'submit', 'clear', 'previous', 'next','previous-page','next-page'].map(id => [`find-${id}`, new Element()]));
   elements.get('find-mode').value = 'search'; elements.get('find-keys').checked = elements.get('find-values').checked = true;
   return { getElementById: id => elements.get(id), createElement: tag => new Element(tag), elements };
 }

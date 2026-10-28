@@ -102,9 +102,9 @@ func parseDocumentContext(ctx context.Context, format string, source []byte, lim
 	if format == "yml" {
 		format = "yaml"
 	}
-	// CSV span capture still requires its row graph. Other formats emit compact
-	// records directly while walking the validated parser tree.
-	compactMode = compactMode && format != "csv"
+	if compactMode && format == "csv" {
+		return parseCompactCSV(ctx, source, limits)
+	}
 	d := &Document{Format: format, Source: bytes.Clone(source), Nodes: map[string]*Node{}, limits: limits}
 	var root *yaml.Node
 	jsonSpans := map[*yaml.Node]byteSpan{}
@@ -197,23 +197,39 @@ func parseDocumentContext(ctx context.Context, format string, source []byte, lim
 		positions = columnOffsets(source, starts)
 	}
 	count := 0
-	var inputs []compact.Input
+	var builder *compact.Builder
 	var rawIDs map[*yaml.Node]uint32
 	complexKeys, hasYAMLMetadata := false, false
 	if compactMode {
-		var values func(*yaml.Node) int
-		values = func(n *yaml.Node) int {
-			total := 1
-			for i, c := range n.Content {
-				if n.Kind != yaml.MappingNode || i%2 == 1 {
-					total += values(c)
-				}
-			}
-			return total
+		var err error
+		builder, err = compact.NewBuilder(ctx, textstore.FromImmutable(d.Source), limits.MaxNodes, MaxDepth+1)
+		if err != nil {
+			return nil, err
 		}
-		inputs = make([]compact.Input, values(root))
 		if format == "yaml" {
 			rawIDs = make(map[*yaml.Node]uint32)
+			var nextID uint32
+			var anchors func(*yaml.Node) error
+			anchors = func(n *yaml.Node) error {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				nextID++
+				if n.Anchor != "" {
+					rawIDs[n] = nextID
+				}
+				for i, child := range n.Content {
+					if n.Kind != yaml.MappingNode || i%2 == 1 {
+						if err := anchors(child); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			}
+			if err := anchors(root); err != nil {
+				return nil, err
+			}
 		}
 	}
 	flowEnds := map[int]int{}
@@ -231,12 +247,6 @@ func parseDocumentContext(ctx context.Context, format string, source []byte, lim
 			return nil, fmt.Errorf("document exceeds depth %d", MaxDepth)
 		}
 		n := &Node{ID: strconv.Itoa(count), Label: label, Path: path, raw: raw, parent: parent, key: key}
-		inputIndex := count - 1
-		if compactMode {
-			if rawIDs != nil && (raw.Anchor != "" || raw.Alias != nil) {
-				rawIDs[raw] = uint32(count)
-			}
-		}
 		var children []uint32
 		if span, ok := jsonSpans[raw]; ok {
 			n.Start, n.End = span.start, span.end
@@ -302,6 +312,7 @@ func parseDocumentContext(ctx context.Context, format string, source []byte, lim
 				if compactMode {
 					children = append(children, compactID(child.ID))
 					n.End = max(n.End, child.End)
+					raw.Content[i], raw.Content[i+1] = nil, nil
 				} else {
 					n.Children = append(n.Children, child)
 				}
@@ -326,6 +337,7 @@ func parseDocumentContext(ctx context.Context, format string, source []byte, lim
 				if compactMode {
 					children = append(children, compactID(child.ID))
 					n.End = max(n.End, child.End)
+					raw.Content[i] = nil
 				} else {
 					n.Children = append(n.Children, child)
 				}
@@ -374,8 +386,18 @@ func parseDocumentContext(ctx context.Context, format string, source []byte, lim
 				in.HasMetadata = in.HasMetadata || yamlCompactMetadata(raw) || rawMetadata(key)
 				in.NativeIndent = max(0, fragmentIndent(n))
 				hasYAMLMetadata = hasYAMLMetadata || rawMetadata(raw) || rawMetadata(key)
+				if raw.Alias != nil {
+					in.Target = rawIDs[raw.Alias]
+				}
 			}
-			inputs[inputIndex] = in
+			if err := builder.Add(in); err != nil {
+				return nil, err
+			}
+			// No compact record points back into the parser. Release consumed
+			// nodes during traversal instead of keeping the whole graph alive.
+			delete(jsonSpans, raw)
+			delete(jsonSpans, key)
+			raw.Content = nil
 		} else {
 			d.Nodes[n.ID] = n
 		}
@@ -391,18 +413,12 @@ func parseDocumentContext(ctx context.Context, format string, source []byte, lim
 		return nil, err
 	}
 	if compactMode {
-		for raw, id := range rawIDs {
-			if raw.Alias != nil {
-				inputs[id-1].Target = rawIDs[raw.Alias]
-			}
-		}
 		rootID := compactID(d.Root.ID)
-		// Compact construction allocates the retained chunks. Release parser
-		// references first so its raw graph can be collected during that work.
+		// The builder now owns the final records. No parser references escape.
 		d.raw, d.Root, root = nil, nil, nil
 		jsonSpans, rawIDs = nil, nil
 		positions, flowEnds, keyFingerprints = nil, nil, nil
-		tree, err := compact.New(ctx, textstore.FromImmutable(d.Source), inputs, rootID, limits.MaxNodes, MaxDepth+1)
+		tree, err := builder.Finish(rootID)
 		if err != nil {
 			return nil, err
 		}

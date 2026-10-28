@@ -9,6 +9,7 @@ test('large document renders a bounded editor, accepts input and preserves undo'
  const port=Number(process.env.DATATREE_BROWSER_PORT||18917);
  const input=JSON.parse(await readFile(join(tmpdir(),`datatree-browser-${port}.json`),'utf8'));
  const errors=[];page.on('pageerror',error=>errors.push(error.name));
+ let locationRequests=0;page.on('request',request=>{if(request.url().includes('/api/node-location?'))locationRequests++;});
  await page.route('**/*',route=>route.request().url().startsWith(baseURL+'/')?route.continue():route.abort());
  await page.addInitScript(()=>{
   window.__dtPerformance={keys:[],paint:[],scroll:[],longTasks:[],eventDurations:[],eventTimingSupported:false};
@@ -66,6 +67,18 @@ test('large document renders a bounded editor, accepts input and preserves undo'
   await expect(page.locator('#inspector .selection-title')).toBeVisible();
   await expect(page.locator('#find-status')).toContainText('1 of 1');
   metrics.revealMS=Date.now()-begin;
+  const cachedLocations=locationRequests,cachedNavigation=[];
+  for(let i=0;i<3;i++)cachedNavigation.push(await page.evaluate(()=>new Promise(resolve=>{
+   const submit=document.getElementById('find-submit'),start=performance.now();let began=false;
+   const observer=new MutationObserver(()=>{
+    if(submit.disabled)began=true;
+    else if(began){observer.disconnect();requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(performance.now()-start)));}
+   });
+   observer.observe(submit,{attributes:true,attributeFilter:['disabled']});
+   document.querySelector('#find-results button').click();
+  })));
+  metrics.cachedNavigationP95=percentile(cachedNavigation,.95);
+  expect(locationRequests).toBe(cachedLocations);
   await source.focus();await page.keyboard.press('ArrowRight');await page.keyboard.press('Backspace');await page.keyboard.type(input.format==='csv'?'x':'4');
   const apply=Date.now();await page.locator('#apply').click();
   await expect(page.locator('#revision')).toContainText('Revision 2');
@@ -75,13 +88,17 @@ test('large document renders a bounded editor, accepts input and preserves undo'
  }
  const session=await page.context().newCDPSession(page);
  const heap=await session.send('Runtime.getHeapUsage');metrics.jsHeapUsedBytes=heap.usedSize;
+ metrics.openBudgetMS=Number(process.env.DATATREE_PERF_OPEN_MS||(input.bytes>20*1048576?10000:2000));
  expect(errors).toEqual([]);
  const out=process.env.DATATREE_BROWSER_RESULTS||join(tmpdir(),`datatree-browser-results-${input.format}-${Math.round(input.bytes/1048576)}.json`);
  await writeFile(out,JSON.stringify(metrics,null,2)+'\n');
  console.log(JSON.stringify(metrics));
  if(process.env.DATATREE_PERF_STRICT==='1'){
   expect(metrics.typingP95).toBeLessThan(50);
-  expect(metrics.openMS).toBeLessThan(input.bytes>20*1048576?10000:2000);
+  const openBudget=metrics.openBudgetMS;
+  expect(Number.isFinite(openBudget)&&openBudget>0).toBe(true);
+  expect(metrics.openMS).toBeLessThan(openBudget);
   if(metrics.editMS!==undefined)expect(metrics.editMS).toBeLessThan(500);
+  if(metrics.cachedNavigationP95!==undefined)expect(metrics.cachedNavigationP95).toBeLessThan(100);
  }
 });

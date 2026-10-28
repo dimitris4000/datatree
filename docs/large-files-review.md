@@ -34,3 +34,7 @@ Native-browser profiling and 10/50/100 MiB measurements are being performed sepa
 ## Startup-path follow-up, 2026-10-28
 
 Independent read-only review found no confirmed high-impact issue in direct JSON/JSONL/YAML compact import, local replacement or session snapshots. IDs, aliases, metadata, key weights and source spans preserve prior compaction semantics. Dense import IDs use direct record/visit arrays; sparse/reordered IDs retain map validation, and root/child/alias bounds are checked before slice access. The trailing-trivia YAML concern is guarded by local-context checks and complete-parse fallback. Browser and test evidence is recorded separately in the performance guide and ledger.
+
+## Memory follow-up after c59712f
+
+Read-only review of the postorder builder, early raw-reference release and streaming CSV found no confirmed correctness regression. Focused builder/CSV/parity/depth tests passed. Follow-up parity coverage includes recursive YAML aliases and empty YAML; exact scalar builder limits and cancelled Finish are covered. Initial JSON/JSONL/YAML still parse a full raw tree, so the measured memory reduction does not establish fully streamed import for those formats. Native OS input methods and screen readers remain manual qualification.

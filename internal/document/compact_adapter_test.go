@@ -38,6 +38,8 @@ func TestDirectCompactImportMatchesLegacyCompaction(t *testing.T) {
 		{"yaml", "# heading\nfirst: &a\n  text: |\n    hello\n    world\ncopy: *a\nflow: {a: [true, null]}\n"},
 		{"yaml", "? [a, b]\n: !custom value\n---\n- é😀\n- next\n"},
 		{"yaml", "a:\n  b: one\n  c:\n  - two\n  - three\n"},
+		{"yaml", "&self [*self]\n"},
+		{"yaml", ""},
 	} {
 		t.Run(tc.format+tc.source[:min(8, len(tc.source))], func(t *testing.T) {
 			legacy, err := parseLegacyWithLimitsContext(context.Background(), tc.format, []byte(tc.source), DefaultLimits())

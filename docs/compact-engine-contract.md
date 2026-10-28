@@ -70,3 +70,7 @@ The current frontend `stableIDs` contract also promises unchanged source geometr
 ## Tests and acceptance
 
 Test compact versions against legacy semantics for all formats, byte/UTF-16/CRLF bounds, exact numeric text, metadata fallback, aliases, duplicate keys, invalid patches, key edits, page/index/path lookup, multiple local edits, undo/redo, concurrency and bounded retention. Verify unrelated rows/source anchors are shared, not merely identical. Rerun all functional/race/JS/build checks, sample benchmarks and 10/50/100 MiB workflows. Record peak versus retained allocation honestly. Browser qualification remains separate until an actual browser test is available.
+
+## Postorder import builder
+
+`compact.NewBuilder(ctx, text, maxNodes, maxDepth)` accepts one `Input` at a time through `Add`, with children added before their parent. `Finish(root)` validates root reachability and alias targets, publishes one immutable Tree and closes the builder. Duplicate/repeated/missing children, parent/span ordering, depth/weight, cancellation and invalid roots reject publication; errors permanently invalidate that builder. This avoids a document-sized intermediate Input slice. Existing New/Replace APIs remain for independent callers and fragment replacement. CSV streams directly to this API; JSON/JSONL/YAML use it while consuming their validated raw parser tree.

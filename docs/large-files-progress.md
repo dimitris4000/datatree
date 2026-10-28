@@ -73,3 +73,17 @@ No interrupted verification commands remain. Further work is the explicitly miss
 ## Authorized checkpoint and memory follow-up
 
 The user authorized a commit of the large-file implementation and continued work. The measured100 MiB YAML startup time is accepted for now; further effort targets initial transient memory and remaining operation/manual qualification. Pre-existing pagination changes and the separately supplied AGENTS.md remain outside the commit. The staged frontend bundle is built against the staged tree source, preserving working pagination changes separately.
+
+## Memory follow-up after c59712f
+
+Plan: (1) postorder compact builder with equivalent hierarchy/span/limit/cancellation validation; (2) emit JSON/JSONL/YAML records during traversal and release consumed raw references; (3) stream CSV rows directly into records; (4) compare generated100 MiB allocations/RSS, run full/race suites and browser workflows. The accepted YAML startup time is not a blocker.
+
+Builder tests failed for missing NewBuilder before implementation, then passed. Invalid hierarchy, repeated child, unreachable record, depth/weight, missing alias and cancellation cases reject publication. Finished builders cannot mutate published versions. Existing compact record parity tests pass after switching the importer. Initial YAML measurement: cumulative allocation2.198 GB versus2.464 GB; process peak RSS1.926 GB versus2.094 GB. CSV streaming parity tests failed for missing parseCompactCSV before implementation; they cover CRLF, quoted newlines/escaped quotes, Unicode, empty cells/records, header-only files and header storage reuse.
+
+- CSV streaming100 MiB: allocation445,199,352 bytes, process peak RSS612,114,432 bytes, parse1.188 s. Isolated checkpoint baseline rerun: allocation3,566,269,552 bytes, peak RSS2,941,165,568 bytes, parse5.981 s.
+- Chromium100 MiB CSV:3.696 s open,32 ms typing p95,41.5 ms cached navigation,227 ms edit. JSON:7.389 s open,40 ms typing,43.5 ms cached navigation,235 ms edit. YAML with explicitly accepted12 s startup budget:10.735 s open,32 ms typing,31.5 ms cached navigation,213 ms edit. JSONL:7.810 s open,32 ms typing,31.2 ms cached navigation,219 ms edit.
+- Added Chromium protocol IME composition with emoji, accessible labels, Escape then Tab focus exit and keyboard draft discard. These pass on100 MiB fixtures; native OS IME UI and screen-reader use remain manual. Cached navigation additionally asserts zero repeat source-location fetches.
+- Read-only source review found no confirmed correctness regression. Additional parity cases now cover recursive YAML aliases and empty YAML; builder tests cover exact scalar depth/weight and cancelled Finish.
+- Initial checkpoint c59712f is committed. The separate contributor-guide commit2e09c99 appeared during continuation and remains preserved. Follow-up memory changes remain uncommitted.
+
+Memory follow-up verification: full Go suite, full race suite, go vet, all103 Node tests, asset rebuild and git diff --check passed. Updated Chromium100 MiB workflows passed for JSON, JSONL and CSV with original strict budgets, and YAML with the explicit accepted12 s open budget; composition, keyboard focus exit/discard and cached navigation checks pass. No interrupted commands remain. Follow-up code is uncommitted; c59712f remains the requested implementation checkpoint. Native OS IME/screen-reader qualification and further JSON/JSONL/YAML parser streaming remain separate work. Existing pagination changes and their derived working bundle difference remain preserved.

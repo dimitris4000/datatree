@@ -2,7 +2,7 @@
 
 ## Implemented
 
-`ParseWithLimitsContext` automatically switches retained storage above 1 MiB. `ParseCompactWithLimitsContext` makes the same mode available to small fixtures. Imports validate through the existing raw parser, then emit compact records with source anchors, raw-node weights and mapping-key depth. JSON/JSONL/YAML avoid constructing a full application graph; CSV temporarily constructs and discards it. Raw parser graphs are not retained. Root is a shallow summary. `Document.Source` remains one immutable contiguous copy for compatibility.
+`ParseWithLimitsContext` automatically switches retained storage above 1 MiB. `ParseCompactWithLimitsContext` makes the same mode available to small fixtures. JSON/JSONL/YAML validate through the raw parser, then emit final compact records through a postorder builder, releasing consumed raw references. No full application graph or intermediate record slice is created. CSV streams rows directly into the builder, retaining no raw/application graph. Source anchors, raw-node weights and mapping-key depth preserve the existing contracts. Root is a shallow summary. `Document.Source` remains one immutable contiguous copy for compatibility.
 
 `NodeCount`, `LookupNode` and `ChildPage` serve shallow summaries and bounded child pages. Server state, tree pages, inspector and representation lookup use them. Source ranges, source lookup, ancestors, normal search and direct key/index queries operate on compact records; they do not rebuild a legacy AST. Paths and line/column locations are produced when requested. Search pagination preserves preorder cursor semantics and direct queries retain the existing query-work budget.
 
@@ -42,7 +42,7 @@ These are real handler timings in-process. They are not native-browser measureme
 
 ## Remaining architectural boundaries
 
-- Initial compact import still builds a full raw parser tree. JSON/JSONL/YAML now emit compact inputs directly during its validated traversal, avoiding the complete application Node graph; CSV still temporarily builds that graph. Parser references are released before retained chunk construction. Direct parser-to-record streaming and peak-memory qualification remain unfinished.
+- JSON/JSONL/YAML initial compact import still builds a full raw parser tree. Final records are now emitted directly and consumed raw references are released during traversal. CSV already streams directly without a raw tree. Further JSON/YAML parser streaming and broader peak-memory qualification remain unfinished.
 - One flat Source copy is produced for each applied version, as allowed by the coordination contract. Very large individual scalar contexts still require parsing/copying that scalar; the parser does not tokenize incrementally within a single scalar.
 - General multi-patch/whole-source changes and unsupported CSV row/YAML contexts may reparse the document. JSON key and structural parent contexts are local, but a root-sized container still requires root-sized parsing. The safe local paths do not silently weaken format validation.
 - Advanced queries and raw-node conversions/diff/schema work can transiently allocate a full graph. They do not retain it after completion.

@@ -48,7 +48,7 @@ Repeat generated checks for `jsonl`, `yaml` and `csv`; sizes 10/50/100 are suppo
 
 Open time is server initial load/index time plus navigation-to-revision-ready time; it excludes fixture generation, binary compilation, browser launch and harness readiness polling. Typing p95 uses Chromium Event Timing keydown durations; events omitted below its 16 ms threshold are conservatively counted as 16 ms. First-frame and two-frame timing are recorded separately, as are scroll-frame p95 and longest main-thread tasks. These are one-run measurements on an Intel i9-9980HK, not statistically established service guarantees. JavaScript used heap is recorded separately and is not backend peak RSS. Native IME, accessibility and other browsers remain manual checks.
 
-The private 7,654,398-byte example opened/rendered in 1.256 s, with typing p95 32 ms and 74 rendered source lines. These generated fixture runs exercise edits and Undo as well as rendering:
+The private 7,654,398-byte example opened/rendered in 1.256 s, with typing p95 32 ms and 74 rendered source lines. The checkpoint runs below exercise edits and Undo as well as rendering; current memory-follow-up measurements appear later in this guide:
 
 | Fixture | Open/render | Typing p95 | Scroll frame p95 | Query/reveal | Edit commit | Rendered lines |
 |---|---:|---:|---:|---:|---:|---:|
@@ -69,9 +69,9 @@ All 10/50 MiB strict checks passed. At 100 MiB, JSON/JSONL/CSV passed; YAML comp
 
 ## Engine boundaries
 
-Documents above 1 MiB retain compact persistent records rather than raw YAML/application node graphs. Source anchors and record chunks are shared between versions. Simple search, direct queries, source navigation and bounded child pages operate directly on records. Local scalar edits across formats and JSON/JSONL parent-context changes avoid complete reparsing; history restores compact versions without parsing. JSON/JSONL/YAML initial imports emit compact inputs while walking the validated parser tree, omitting the complete application graph and eager path/location strings. CSV still constructs a temporary application graph before compaction.
+Documents above 1 MiB retain compact persistent records rather than raw YAML/application node graphs. Source anchors and record chunks are shared between versions. Simple search, direct queries, source navigation and bounded child pages operate directly on records. Local scalar edits across formats and JSON/JSONL parent-context changes avoid complete reparsing; history restores compact versions without parsing. JSON/JSONL/YAML initial imports emit final records through a postorder builder while walking the validated parser tree. Consumed raw nodes are released during traversal; no full application graph or intermediate record slice is created. CSV streams validated rows directly into final records without a raw parser or application graph.
 
-Initial parsing still allocates a complete raw parser tree and compact input slice. Raw parser references are released before retained chunk construction. Full conversions, schema evaluation, diff/revert, advanced queries, broad contexts and unsupported CSV/YAML edits may transiently materialize or reparse the complete document. Those operations remain cancellable background work; arbitrary operations are not guaranteed to complete within local-edit targets. A contiguous current source copy is still produced on Apply. Variable-length edits refresh the canonical UI; only guaranteed unchanged source geometry uses targeted cache refresh.
+JSON/JSONL/YAML initial parsing still allocates a complete raw parser tree before traversal. CSV retains only its current decoded row, headers, source and final compact records during import. Full conversions, schema evaluation, diff/revert, advanced queries, broad contexts and unsupported CSV/YAML edits may transiently materialize or reparse the complete document. Those operations remain cancellable background work; arbitrary operations are not guaranteed to complete within local-edit targets. A contiguous current source copy is still produced on Apply. Variable-length edits refresh the canonical UI; only guaranteed unchanged source geometry uses targeted cache refresh.
 
 Keep default 20 MiB / one-million-node limits until peak-memory and manual interaction qualification support a change. Browser timing passes do not establish bounded initial peak memory.
 
@@ -84,4 +84,25 @@ go test -c -o /tmp/datatree-document-final.test ./internal/document
 DATATREE_BENCH_MIB=100 DATATREE_BENCH_FORMAT=yaml /usr/bin/time -l /tmp/datatree-document-final.test -test.run='^$' -test.bench='^BenchmarkLargeParse$' -test.benchtime=1x -test.benchmem
 ```
 
-Remaining performance work: direct parser-to-record import (especially YAML/CSV), lower transient initial allocation, the missed 100 MiB YAML open target, and manual IME/accessibility/cached-navigation qualification. File limits remain unchanged.
+The user accepted the current 100 MiB YAML startup time on 2026-10-28; further startup optimization is deferred. Lower transient allocation in JSON/JSONL/YAML and native OS IME/screen-reader qualification remain. File limits remain unchanged.
+
+## Memory follow-up after checkpoint c59712f
+
+The postorder builder writes final record chunks directly and rejects invalid hierarchy, spans, limits, cancellation and unresolved aliases before publication. Parser traversal releases consumed raw references. CSV streams rows directly, preserving source bytes, header names, field positions, raw-node weight limits, quoted newlines and reused-reader storage semantics.
+
+| Generated100 MiB import | Allocated before | Allocated after | Process peak RSS before | Process peak RSS after | Parse before | Parse after |
+|---|---:|---:|---:|---:|---:|---:|
+| YAML | 2.464 GB | 2.198 GB | 2.094 GB | 1.926 GB | 7.950 s | 8.080 s |
+| CSV | 3.566 GB | 0.445 GB | 2.941 GB | 0.612 GB | 5.981 s | 1.188 s |
+
+Same standalone benchmark and fixture generator as above. GB uses decimal bytes; RSS includes fixture/runtime overhead and is not retained document size. Single-run timing fluctuates; the CSV baseline was rerun without competing heavy work. Allocation totals and process peaks are measured separately. CSV Chromium open/render subsequently measured3.696 s, with edit227 ms, cached navigation p95 41.5 ms and typing p95 32 ms.
+
+Cached navigation now records command-to-two-animation-frame completion for three repeated result selections and asserts that no new source-location request occurs. The 100 MiB JSON run recorded43.5 ms p95 and YAML31.7 ms. Chromium protocol-driven Japanese/Chinese composition with emoji, accessible textbox/button naming, Escape then Tab leaving the editor, and keyboard draft discard pass. These checks do not replace native OS input-method UI or screen-reader testing.
+
+For accepted YAML startup timing, retain the other strict gates while explicitly setting its budget:
+
+```sh
+DATATREE_BROWSER_MIB=100 DATATREE_BROWSER_FORMAT=yaml DATATREE_PERF_STRICT=1 DATATREE_PERF_OPEN_MS=12000 npm run test:browser
+```
+
+`DATATREE_PERF_OPEN_MS` overrides only the open/render budget for that run; original defaults remain2 s for small fixtures and10 s above20 MiB. This records the accepted YAML timing without claiming it meets the earlier10-second goal.

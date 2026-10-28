@@ -26,6 +26,14 @@ import (
 var assets embed.FS
 
 type browserSession struct {
+	mu                 sync.Mutex
+	jobs               map[string]*operationJob
+	originalDocument   *document.Document
+	originalMetadata   diffBaseline
+	comparisonMetadata diffBaseline
+	git                *gitInfo
+	gitPath            string
+	gitLoaded          bool
 	data               *document.Session
 	filename           string
 	path               string
@@ -36,6 +44,7 @@ type browserSession struct {
 	touched            time.Time
 }
 type Server struct {
+	jobSlots  chan struct{}
 	mu        sync.Mutex
 	sessions  map[string]*browserSession
 	static    http.Handler
@@ -50,7 +59,7 @@ func New(options ...document.Limits) *Server {
 		limits = options[0].Normalized()
 	}
 	sub, _ := fs.Sub(assets, "web")
-	return &Server{sessions: map[string]*browserSession{}, static: http.FileServer(http.FS(sub)), inspector: template.Must(template.ParseFS(assets, "web/inspector.html")), limits: limits}
+	return &Server{jobSlots: make(chan struct{}, 4), sessions: map[string]*browserSession{}, static: http.FileServer(http.FS(sub)), inspector: template.Must(template.ParseFS(assets, "web/inspector.html")), limits: limits}
 }
 
 // NewWithFile validates the initial document before the caller starts listening.
@@ -60,6 +69,8 @@ func NewWithFile(path string, options ...document.Limits) (*Server, error) {
 	if err := initial.openLocal(path, 0); err != nil {
 		return nil, fmt.Errorf("load startup file %q: %w", path, err)
 	}
+	initial.originalDocument = initial.data.Doc
+	initial.originalMetadata = baselineMetadata("original", initial.filename, initial.data.Doc)
 	s.initial = initial
 	return s, nil
 }
@@ -114,6 +125,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.static.ServeHTTP(w, r2)
 		return
 	}
+	if r.URL.Path == "/api/jobs" || r.URL.Path == "/api/jobs/cancel" {
+		s.jobsRequest(w, r)
+		return
+	}
+	if r.URL.Query().Get("async") == "true" {
+		s.startJob(w, r)
+		return
+	}
 	if r.URL.Path == "/api/files" {
 		s.fileBrowserRequest(w, r)
 		return
@@ -123,11 +142,32 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	session := s.session(w, r)
+	s.mu.Unlock()
+	if job, ok := r.Context().Value(operationJobKey{}).(*operationJob); ok && job.owner != session {
+		fail(w, errors.New("stale revision; session expired"))
+		return
+	}
+	session.mu.Lock()
+	locked := true
+	lockedSession := session
+	defer func() {
+		if locked {
+			lockedSession.mu.Unlock()
+		}
+	}()
+	if r.Method == "GET" {
+		snapshot := session.snapshot()
+		session.mu.Unlock()
+		locked = false
+		session = snapshot
+	}
 	d := session.data
 	if r.Method == "GET" {
 		switch r.URL.Path {
+		case "/api/source", "/api/locate", "/api/node-location", "/api/representation":
+			s.largeFileRead(w, r, session)
+			return
 		case "/api/state":
 			state(w, session)
 			return
@@ -165,8 +205,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if id == "" {
 				id = d.Doc.Root.ID
 			}
-			n := d.Doc.Nodes[id]
-			if n == nil {
+			n, ok := d.Doc.LookupNode(id)
+			if !ok {
 				http.Error(w, "node not found", 404)
 				return
 			}
@@ -175,10 +215,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if offset < 0 {
 				offset = 0
 			}
-			if limit < 1 || limit > 50 {
+			if limit < 1 {
+				limit = 20
+			}
+			if limit > 50 {
 				limit = 50
 			}
-			writeJSON(w, treeNode(n, offset, limit, 2))
+			writeJSON(w, treeNode(d.Doc, n, offset, limit, 2))
 			return
 		case "/inspector":
 			s.renderInspector(w, r, d, "")
@@ -212,6 +255,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ChangeIndex   *int          `json:"changeIndex"`
 		SaveFilename  *string       `json:"saveFilename"`
 		Schema        *schemaUpload `json:"schema"`
+		Patches       []sourcePatch `json:"patches"`
+		Full          bool          `json:"full"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, (int64(s.limits.MaxBytes)+document.MaxSchemaBytes)*6+8192)
 	if r.URL.Path == "/actions/edit" {
@@ -257,13 +302,31 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	var live *browserSession
+	baseRevision, baseGeneration := d.Revision, session.schemaGeneration
+	baseComparison := session.comparison
+	switch r.URL.Path {
+	case "/api/apply", "/api/patch", "/api/edit", "/actions/edit", "/api/history", "/api/import", "/api/open", "/api/diff-revert", "/api/preview":
+		live = session
+		session = live.snapshot()
+		d = session.data
+		live.mu.Unlock()
+		locked = false
+	}
+	if r.URL.Path == "/api/convert" && in.SaveFilename == nil {
+		live = session
+		session = live.snapshot()
+		d = session.data
+		live.mu.Unlock()
+		locked = false
+	}
 	var err error
 	var savedPath string
 	switch r.URL.Path {
 	case "/api/import":
-		err = session.importUploaded(in.Format, in.Text, in.Filename, in.Schema, in.Revision)
+		err = session.importUploadedContext(r.Context(), in.Format, in.Text, in.Filename, in.Schema, in.Revision)
 	case "/api/open":
-		err = session.openLocal(in.Path, in.Revision)
+		err = session.openLocalContext(r.Context(), in.Path, in.Revision)
 	case "/api/diff-revert":
 		if in.ChangeIndex == nil {
 			err = errors.New("choose a change to revert")
@@ -277,12 +340,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			session.replaceDiffBaseline(w, in.Format, in.Text, in.Filename, in.Revision)
 		}
 		return
+	case "/api/patch":
+		err = applyPatches(r.Context(), d, in.Patches, in.Revision)
 	case "/api/apply":
-		err = d.Apply(in.Format, []byte(in.Text), in.Revision)
+		err = d.ApplyContext(r.Context(), in.Format, []byte(in.Text), in.Revision)
 	case "/api/edit", "/actions/edit":
-		err = d.Mutate(in.Action, in.Revision)
+		err = d.MutateContext(r.Context(), in.Action, in.Revision)
 	case "/api/history":
-		err = d.History(in.Direction, in.Revision)
+		err = d.HistoryContext(r.Context(), in.Direction, in.Revision)
 	case "/api/preview":
 		if in.Revision != d.Revision {
 			err = errors.New("stale revision")
@@ -290,7 +355,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			var text string
 			text, err = d.Preview(in.Format)
 			if err == nil {
-				writeJSON(w, session.conversionPreview(in.Format, text))
+				if r.Context().Err() != nil {
+					return
+				}
+				writeJSON(w, session.conversionPreview(in.Format, text, in.Full))
 				return
 			}
 		}
@@ -305,8 +373,40 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err == nil && (r.URL.Path == "/api/import" || r.URL.Path == "/api/open") {
+		session.originalDocument = d.Doc
+		session.originalMetadata = baselineMetadata("original", session.filename, d.Doc)
+		session.comparisonMetadata = diffBaseline{}
 		session.comparison = nil
 		session.comparisonFilename = ""
+	}
+	if live != nil && err == nil {
+		live.mu.Lock()
+		if r.Context().Err() != nil {
+			err = r.Context().Err()
+		} else if live.data.Revision != baseRevision || live.schemaGeneration != baseGeneration || live.comparison != baseComparison {
+			err = errors.New("stale revision; document changed during operation")
+		} else {
+			if job, ok := r.Context().Value(operationJobKey{}).(*operationJob); ok {
+				job.committed = true
+			}
+			live.data = session.data
+			live.filename = session.filename
+			live.path = session.path
+			live.comparison = session.comparison
+			live.comparisonFilename = session.comparisonFilename
+			live.schema = session.schema
+			live.schemaGeneration = session.schemaGeneration
+			live.originalDocument = session.originalDocument
+			live.originalMetadata = session.originalMetadata
+			live.comparisonMetadata = session.comparisonMetadata
+			live.git = session.git
+			live.gitPath = session.gitPath
+			live.gitLoaded = session.gitLoaded
+		}
+		if err != nil {
+			d = live.data.Clone()
+		}
+		live.mu.Unlock()
 	}
 	if r.URL.Path == "/actions/edit" {
 		if err != nil {
@@ -320,6 +420,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		fail(w, err)
+		return
+	}
+	if r.URL.Path == "/api/patch" {
+		v := stateValue(session, savedPath)
+		v["previousRevision"] = in.Revision
+		v["patches"] = in.Patches
+		writeJSON(w, v)
 		return
 	}
 	writeState(w, session, savedPath)
@@ -365,8 +472,11 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) *browserSession
 		initial := s.initial
 		// Parsed documents are immutable; edits produce a new document. Each
 		// session owns its revision, original bytes and history independently.
-		v.data = &document.Session{Doc: initial.data.Doc, Original: bytes.Clone(initial.data.Original), OriginalFormat: initial.data.OriginalFormat, Revision: 1, Limits: s.limits}
+		v.data = &document.Session{Doc: initial.data.Doc, Original: initial.data.Original, OriginalFormat: initial.data.OriginalFormat, Revision: 1, Limits: s.limits}
 		v.path, v.filename = initial.path, initial.filename
+		v.git, v.gitPath, v.gitLoaded = initial.git, initial.gitPath, initial.gitLoaded
+		v.originalDocument = initial.data.Doc
+		v.originalMetadata = initial.originalMetadata
 		v.schema, v.schemaGeneration = initial.schema, initial.schemaGeneration
 	}
 	s.sessions[id] = v
@@ -378,6 +488,9 @@ func state(w http.ResponseWriter, session *browserSession) {
 }
 
 func writeState(w http.ResponseWriter, session *browserSession, savedPath string) {
+	writeJSON(w, stateValue(session, savedPath))
+}
+func stateValue(session *browserSession, savedPath string) map[string]any {
 	d := session.data
 	v := map[string]any{"revision": d.Revision, "canUndo": d.CanUndo(), "canRedo": d.CanRedo()}
 	v["limits"] = d.Limits.Normalized()
@@ -390,16 +503,58 @@ func writeState(w http.ResponseWriter, session *browserSession, savedPath string
 	if session.filename != "" {
 		v["filename"] = session.filename
 	}
-	if info := localGitInfo(session.path); info != nil {
+	if !session.gitLoaded || session.gitPath != session.path {
+		session.git = localGitInfo(session.path)
+		session.gitPath = session.path
+		session.gitLoaded = true
+	}
+	if info := session.git; info != nil {
 		v["git"] = info
 	}
 	if d.Doc != nil {
 		v["format"] = d.Doc.Format
-		v["source"] = string(d.Doc.Source)
+		v["originalMatches"] = normalizedSourcesEqual(d.Doc.Source, d.Original)
 		v["root"] = d.Doc.Root.ID
-		v["nodes"] = len(d.Doc.Nodes)
+		v["nodes"] = d.Doc.NodeCount()
+		if changed := d.Doc.StableChanges(); len(changed) > 0 {
+			v["stableIDs"] = true
+			v["changedNodes"] = changed
+		}
 	}
-	writeJSON(w, v)
+	return v
+}
+
+// Editor offsets normalize all line endings. Compare at revision boundaries,
+// never on each browser caret movement, without creating normalized copies.
+func normalizedSourcesEqual(a, b []byte) bool {
+	if bytes.Equal(a, b) {
+		return true
+	}
+	if !bytes.ContainsAny(a, "\r") && !bytes.ContainsAny(b, "\r") {
+		return false
+	}
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		left, right := a[i], b[j]
+		i++
+		j++
+		if left == '\r' {
+			left = '\n'
+			if i < len(a) && a[i] == '\n' {
+				i++
+			}
+		}
+		if right == '\r' {
+			right = '\n'
+			if j < len(b) && b[j] == '\n' {
+				j++
+			}
+		}
+		if left != right {
+			return false
+		}
+	}
+	return i == len(a) && j == len(b)
 }
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -428,21 +583,23 @@ type wireNode struct {
 	Children []*wireNode `json:"children,omitempty"`
 }
 
-func treeNode(n *document.Node, offset, limit, depth int) *wireNode {
+func treeNode(d *document.Document, n *document.Node, offset, limit, depth int) *wireNode {
+	pageLimit := limit
+	if depth <= 0 {
+		pageLimit = 0
+	}
+	children, total := d.ChildPage(n.ID, offset, pageLimit)
 	value := n.Value
 	if len(value) > 160 {
-		value = value[:160] + "…"
+		value = boundedText(value, 160)
 	}
-	v := &wireNode{ID: n.ID, Label: n.Label, Kind: n.Kind, Value: value, Path: n.Path, Location: n.Location, Target: n.Target, Total: len(n.Children), Offset: offset}
+	v := &wireNode{ID: n.ID, Label: boundedText(n.Label, 512), Kind: n.Kind, Value: value, Path: boundedText(n.Path, 8192), Location: boundedText(n.Location, 8192), Target: n.Target, Total: total, Offset: offset}
 	if depth > 0 {
-		end := offset + limit
-		if end > len(n.Children) {
-			end = len(n.Children)
-		}
-		for i := offset; i < end; i++ {
-			v.Children = append(v.Children, treeNode(n.Children[i], 0, limit, depth-1))
+		for _, child := range children {
+			v.Children = append(v.Children, treeNode(d, child, 0, limit, depth-1))
 		}
 	}
+
 	return v
 }
 
@@ -452,6 +609,7 @@ type inspection struct {
 	JSON, YAML, JSONError, Error string
 	NativeFormat                 string
 	Scalar                       bool
+	Draft                        bool
 	HasParent                    bool
 	CanRename                    bool
 }
@@ -477,28 +635,21 @@ func (s *Server) renderInspector(w http.ResponseWriter, r *http.Request, d *docu
 	if id == "" {
 		id = d.Doc.Root.ID
 	}
-	n := d.Doc.Nodes[id]
-	if n == nil {
+	n, ok := d.Doc.LookupNode(id)
+	if !ok {
 		io.WriteString(w, "<p class=error>Node no longer exists. Select another node.</p>")
 		return
 	}
-	j, je := d.Doc.JSON(n.ID, false)
-	y, ye := d.Doc.YAML(n.ID)
-	if ye != nil {
-		message = ye.Error()
-	}
-	e := ""
-	if je != nil {
-		e = je.Error()
-		j = ""
-	}
+	j, y, e := "", "", ""
 	f := "json"
 	if d.Doc.Format == "yaml" {
 		f = "yaml"
 	}
-	scalar := n.Kind != "object" && n.Kind != "array" && n.Kind != "stream" && n.Kind != "alias" && n.Kind != "tagged"
+	scalar := len(n.Value) <= 65536 && n.Kind != "object" && n.Kind != "array" && n.Kind != "stream" && n.Kind != "alias" && n.Kind != "tagged"
+	draft := false
 	if message != "" && r.FormValue("op") == "replace" {
 		if _, ok := r.Form["text"]; ok {
+			draft = true
 			if r.FormValue("format") == "yaml" {
 				y = r.FormValue("text")
 			} else {
@@ -511,7 +662,12 @@ func (s *Server) renderInspector(w http.ResponseWriter, r *http.Request, d *docu
 			n = &copy
 		}
 	}
-	data := inspection{Node: n, Revision: d.Revision, JSON: j, YAML: y, JSONError: e, Error: message, NativeFormat: f, Scalar: scalar, HasParent: n != d.Doc.Root, CanRename: d.Doc.Format != "csv" && n != d.Doc.Root}
+	copyNode := *n
+	copyNode.Label = boundedText(n.Label, 512)
+	copyNode.Path = boundedText(n.Path, 8192)
+	copyNode.Location = boundedText(n.Location, 8192)
+	copyNode.Value = boundedText(n.Value, 65536)
+	data := inspection{Draft: draft, Node: &copyNode, Revision: d.Revision, JSON: j, YAML: y, JSONError: e, Error: message, NativeFormat: f, Scalar: scalar, HasParent: n.ID != d.Doc.Root.ID, CanRename: d.Doc.Format != "csv" && n.ID != d.Doc.Root.ID}
 	if err := s.inspector.Execute(w, data); err != nil {
 		fmt.Println("inspector:", err)
 	}

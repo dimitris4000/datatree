@@ -184,7 +184,12 @@ func TestLargeDocument(t *testing.T) {
 	}
 	b.WriteString("]}")
 	d := mustParse(t, "json", b.String())
-	if len(d.Root.Children[0].Children) != 15000 {
+	children, total := d.ChildPage(d.Root.ID, 0, 1)
+	if total != 1 || len(children) != 1 {
+		t.Fatal("rows collection lost")
+	}
+	_, total = d.ChildPage(children[0].ID, 0, 1)
+	if total != 15000 {
 		t.Fatal("rows lost")
 	}
 }

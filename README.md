@@ -46,13 +46,13 @@ Restart/rebuild the Go server afterward: frontend assets are embedded at build t
 
 The compact top toolbar combines file opening, document identity and editing controls. Status and error messages appear in the bottom footer.
 
-The toolbar has one **Open file** button. Its dialog offers the server’s file browser and an editable file path. Both use the CLI process’s filesystem permissions and preserve Git context. Tracked files show the current branch and short HEAD commit beside the filename; hover for the full hash. Detached checkouts show **Detached HEAD**. Git details refresh with state responses (including page reloads and edits), and describe the repository checkout, not a commit of your in-memory edits. Untracked files, files outside a repository, unborn repositories and systems without Git show no Git badge. Edits stay in memory until a copy is saved using **Download** or the conversion dialog.
+The toolbar has one **Open file** button. Its dialog offers the server’s file browser and an editable file path. Both use the CLI process’s filesystem permissions and preserve Git context. Tracked files show the current branch and short HEAD commit beside the filename; hover for the full hash. Detached checkouts show **Detached HEAD**. Git details are captured when opening the file and refreshed when reopening it; they describe the repository checkout, not a commit of your in-memory edits. Untracked files, files outside a repository, unborn repositories and systems without Git show no Git badge. Edits stay in memory until a copy is saved using **Download** or the conversion dialog.
 
 - **Collapse all** in the tree controls collapses the selected node and every descendant, including hidden branches and other pages. Other branches retain their expansion state. With no selection, it collapses the entire tree.
 - **Source** on the left contains editable working text, line numbers, a line/column indicator and a read-only Original tab. Selecting a tree card or field highlights and scrolls to its source; moving the editor cursor or selecting text selects the smallest enclosing node in the tree and inspector, opening ancestors and loading the required pages. Selection stays in the editor while the inspector updates. Sync pauses for unapplied source drafts and for Original text that differs from the working document; apply or discard the draft to resume. Apply explicitly; invalid source stays in the editor and the tree retains its last valid state.
 - **Tree** supports drag-to-pan, wheel/button zoom, fit, and expand/collapse using the triangle on a collection card. Selection uses a strong blue outline that stays visible when zoomed out. Selected attributes also have a blue row fill, border and left stripe; Changes and Validation labels remain visible. Double-click a collection title to collapse it when expanded, or open its next level when collapsed. Select a collection to show the level input and **Expand X** button in the bottom controls; X levels are counted beneath that node, and existing expanded branches stay open. Expansion uses each collection’s current page (20 children) and stops after 1,000 collections per action. Collections show 20 children per page. Use the footer to page through fields or items. The keyboard node list below the canvas marks the selected node and brings it into view; attribute navigation centers the actual row, including in tall cards. Pane dividers also accept arrow keys.
 - Right-click a card or field for **Duplicate**, **Rename**, and **Delete**. Object entries ask for a new key; array items duplicate directly. Delete requires confirmation and can be undone. Actions that do not apply to a node are disabled. Escape or clicking outside closes the menu. From the keyboard node list, press **Shift+F10** (or the menu key), use arrow keys to choose an action, and press Enter.
-- Click a card header to select its subtree, or an object field to select that value. The **Inspector** shows its location, native subtree editor, JSON/YAML representations, structured value editing and collection insertion. Duplicate within the same parent; object duplicates require a unique key. Use the triangles inside JSON/YAML representations to collapse nested blocks, or **Collapse all** / **Expand all**. In Subtree, choose **Foldable view** to browse nested blocks and **Edit text** to return to editing. Folding never changes the full text used by Copy or Apply. Copy text or a location using the Copy buttons.
+- Click a card header to select its subtree, or an object field to select that value. The **Inspector** loads a bounded preview and offers native subtree editing, JSON/YAML representations, structured value editing and collection insertion. Choose **Load full text to edit** before changing or applying a subtree. Open a JSON/YAML representation to load its preview; load its complete text before copying a truncated preview. Editors render visible lines and support folding without creating a row for every line. Folding never removes content from Copy or Apply. Duplicate within the same parent; object duplicates require a unique key.
 - Apply or discard source drafts before mutations. Pending subtree edits prompt before selection changes. Invalid subtree input remains editable. All accepted changes are reversible with Undo/Redo.
 - **Convert…** opens a preview; **Confirm conversion** updates the working source. For a file opened by local path or a startup argument, select **Save beside the original file** to save the converted copy in that directory. The suggested name keeps the basename and uses the target extension (`data.json` → `data.yaml`); edit it before choosing **Convert and save**. Existing files are preserved: choose another name if one already exists. A failed save keeps the preview open and the working document unchanged. Browser uploads offer **Download converted copy** with the same editable filename suggestion; the browser controls its destination because upload directories are hidden. Undo restores the previous working format/source and leaves saved copies on disk. JSON-to-YAML conversion uses block mappings, dash-prefixed lists and two-space indentation, matching the Inspector’s YAML representation. Strings are quoted only when needed, and numeric precision and key order are retained. **Download** also saves the working file as a copy.
 
@@ -91,7 +91,7 @@ This is a bounded query subset. Functions, scripts, slices, unions, recursive wi
 
 Results appear in document order, once per node. Select a result or use **Previous** / **Next** to reveal its ancestors and correct page, center the tree and update the Inspector and synchronized Source selection. A query with one result navigates immediately. Navigation preserves the existing subtree-draft confirmation and requires source drafts to be applied or discarded. Searching itself uses the last applied document. The Original tab only highlights when its text matches the applied document.
 
-Search and query text are limited to 4,096 UTF-8 bytes. Results are capped at 200 with a notice when more matches exist. Queries also have a 256-step limit and a work budget; numeric filter operands are limited to 4,096 bytes each. Narrow a query if a limit is reached. Results clear when the document changes or the search controls change. Finding and navigating never modify the document or its undo history.
+Search and query text are limited to 4,096 UTF-8 bytes. Each result page contains at most 200 matches; **Next page** and **Previous page** browse further results while keeping the list bounded. Queries also have a 256-step limit and a work budget; numeric filter operands are limited to 4,096 bytes each. Narrow a query if a work limit is reached. Results clear when the document changes or the search controls change. Finding and navigating never modify the document or its undo history.
 
 ### Schema validation
 
@@ -146,11 +146,23 @@ CSV, JSON and JSONL tree edits regenerate that format's working text. Their orig
 - UTF-8 input; defaults of 20 MiB and 1,000,000 parsed nodes, configurable with `-max-file-size-mb` and `-max-nodes`. Maximum nesting depth remains 256.
 - Rendering is limited to 1,000 visible cards, with viewport culling, collapsed branches and pagination. Large imports are parsed server-side; the whole expanded tree is never sent to the browser.
 - File browsing examines at most 10,000 directory entries and displays at most 1,000 matching folders/files, with a notice when limited. Enter an exact file path for entries outside the displayed list.
-- Up to 30 history revisions within a 64 MiB source-history budget. Oldest revisions are evicted when the budget is reached.
+- Up to 30 history revisions within a 64 MiB changed-text budget. Immutable source pieces are shared across versions; small edits no longer retain a complete source snapshot per revision. Oldest revisions are evicted when the budget is reached. Original imported bytes remain available independently of history.
 - Browser sessions use HttpOnly, SameSite cookies. State is in memory, expires after 30 idle minutes, and disappears when the process stops. At most 16 sessions are retained; the least recently used is evicted when necessary. Tabs in the same browser session share a document; revision checks reject stale edits.
 - No authentication, collaboration, persistent session storage or direct file overwrite. Explicit local-path opening reads regular files on the server computer, subject to the same format and size limits. Conversion can explicitly save a new copy beside a locally opened file; it never replaces existing files. Requests require a loopback host and state changes require the same Origin. Assets are local and CSP blocks third-party connections.
 
-The node limit is checked while reading JSON and after YAML parsing; YAML's parser can temporarily allocate more than the final node budget. File sizes use the configured limit (20 MiB by default). Import parsing is synchronous and sessions share a server lock; this first version targets one local user.
+The node limit is checked while reading JSON and after YAML parsing; YAML's parser can temporarily allocate more than the final node budget. File sizes use the configured limit (20 MiB by default). Expensive document mutations run as cancellable background jobs, with operation stages shown in the footer. Sessions use independent locks and optimistic revision checks. Read requests use immutable document snapshots. Work that has already committed completes its UI refresh even when Cancel is pressed.
+
+### Large files
+
+The source pane uses a locally bundled CodeMirror editor. Opening a document retrieves its source once and one tree page; original text and inspector representations load only when requested. Navigation uses indexed source locations instead of downloading every source range. Source Apply sends changed ranges, and history shares unchanged source pieces.
+
+Files beyond the defaults require explicit limits, for example:
+
+```sh
+go run ./cmd/datatree -max-file-size-mb 100 -max-nodes 4000000 ~/Downloads/state.json
+```
+
+Documents above 1 MiB use compact persistent records and shared source pieces. Local scalar edits across formats and JSON collection edits reparse their affected context; complex YAML, broad structural changes, conversions, schema validation and advanced queries can still build a temporary complete parser tree. Chromium measurements and remaining limits are recorded in the [performance guide](docs/large-files-performance.md). Default limits remain 20 MiB and one million nodes; initial peak memory and manual IME/accessibility qualification remain separate gates.
 
 ## Verify
 
@@ -170,9 +182,19 @@ go vet ./...
 npm test
 ```
 
-Node.js 18+ is required only for the JavaScript tests; no npm packages or build step are required. Tests cover parser/format rules, source preservation including Unicode/CRLF/block scalars, reference cloning, explicit conversion, bounded merges, revision/history behavior, HTTP isolation/origin checks, retained invalid drafts, and layout/viewport hit detection. A representative near-10-MiB JSON fixture is generated in a test.
+The checked-in frontend bundle lets the Go application run without Node or runtime network access. Frontend development requires Node.js 24+ and a dependency installation:
 
-Live browser verification could not run in the implementation sandbox: local listening sockets and browser startup were blocked. The automated HTTP tests use Go's in-process recorder. Manual acceptance: load the example, pan/zoom and select a field; edit, duplicate, undo/redo and download; try YAML containing comments and aliases; verify the three resizable panes and depth-column layout at the target screen size.
+```sh
+npm ci
+npm run build:web
+npm test
+```
+
+Rebuild the bundle after changing frontend sources, then restart/rebuild the Go server because assets are embedded at build time. The lockfile pins dependencies; `npm ci --offline --ignore-scripts` works after they are cached. JavaScript tests use Node/jsdom and include bounded editor DOM, patch composition, lazy previews, paginated Find and cancellation recovery. They do not establish native-browser paint, IME or accessibility behavior.
+
+Go tests cover parser/format rules, source preservation including Unicode/CRLF/block scalars, reference cloning, explicit conversion, bounded merges, persistent history, HTTP isolation/origin checks, invalid drafts and concurrent sessions. Opt-in generated 10/50/100 MiB workflows and private-file benchmarks are documented in the performance guide.
+
+Chromium checks exercise bounded editor rendering, typing, scrolling, search/navigation, source Apply and Undo. Run `npx playwright install chromium` once, then `DATATREE_BROWSER_MIB=100 DATATREE_BROWSER_FORMAT=json DATATREE_PERF_STRICT=1 npm run test:browser`; repeat with `jsonl`, `yaml` and `csv`. The harness creates temporary generated data and removes its server files afterward. To check a private file without committing edits, set `DATATREE_BROWSER_FILE="$HOME/Downloads/state.json"` instead. Timing methodology and limits are in the performance guide. Manual acceptance: load the example, pan/zoom and select a field; edit, duplicate, undo/redo and download; try YAML containing comments and aliases; verify native IME/keyboard behavior, the three resizable panes and depth-column layout at the target screen size.
 
 ## Structure
 

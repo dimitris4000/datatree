@@ -9,6 +9,23 @@ import (
 	"testing"
 )
 
+func TestSizedLocalReadTreatsStatSizeAsHintAndKeepsOverflowByte(t *testing.T) {
+	for _, tc := range []struct {
+		size  int64
+		limit int
+		want  string
+	}{
+		{1, 10, "abcdef"}, // file grew after Stat
+		{9, 10, "abcdef"}, // file shrank after Stat
+		{1, 4, "abcde"},   // retain overflow byte for caller's size rejection
+	} {
+		got, err := readSizedInput(strings.NewReader("abcdef"), tc.size, tc.limit)
+		if err != nil || string(got) != tc.want {
+			t.Fatalf("size %d: %q %v", tc.size, got, err)
+		}
+	}
+}
+
 func TestOpenLocalFileGitContext(t *testing.T) {
 	dir := t.TempDir()
 	git := func(args ...string) string {
@@ -45,7 +62,7 @@ func TestOpenLocalFileGitContext(t *testing.T) {
 		return result
 	}
 	result := open(path, 0)
-	if result["filename"] != "data.json" || result["source"] != `{"value":1}` {
+	if result["filename"] != "data.json" || request(t, h, "GET", "/api/source?revision=1", "", cookie).Body.String() != `{"value":1}` {
 		t.Fatal(result)
 	}
 	info, ok := result["git"].(map[string]any)
@@ -76,7 +93,8 @@ func TestOpenLocalFileGitContext(t *testing.T) {
 	}
 	git("checkout", "--detach")
 	w = request(t, h, "GET", "/api/state", "", cookie)
-	if !strings.Contains(w.Body.String(), `"branch":""`) || !strings.Contains(w.Body.String(), hash) {
+	// Git provenance is cached for the opened document until it is reopened.
+	if !strings.Contains(w.Body.String(), `"branch":"test-branch"`) || !strings.Contains(w.Body.String(), hash) {
 		t.Fatal(w.Body.String())
 	}
 	// A different session must not inherit the opened file's context.

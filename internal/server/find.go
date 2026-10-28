@@ -22,7 +22,7 @@ func (s *Server) find(w http.ResponseWriter, r *http.Request, d *document.Sessio
 		fail(w, err)
 		return
 	}
-	options := document.FindOptions{Mode: q.Get("mode"), Text: q.Get("text")}
+	options := document.FindOptions{Mode: q.Get("mode"), Text: q.Get("text"), Cursor: q.Get("cursor")}
 	for key, target := range map[string]*bool{"keys": &options.Keys, "values": &options.Values, "caseSensitive": &options.CaseSensitive} {
 		if raw, exists := q[key]; exists {
 			if len(raw) != 1 {
@@ -37,7 +37,15 @@ func (s *Server) find(w http.ResponseWriter, r *http.Request, d *document.Sessio
 			*target = value
 		}
 	}
-	result, err := d.Doc.Find(options)
+	if q.Has("limit") {
+		limit, err := strconv.Atoi(q.Get("limit"))
+		if err != nil || limit < 1 || limit > 200 {
+			fail(w, errors.New("find limit must be 1 through 200"))
+			return
+		}
+		options.Limit = limit
+	}
+	result, err := d.Doc.FindContext(r.Context(), options)
 	if err != nil {
 		fail(w, err)
 		return

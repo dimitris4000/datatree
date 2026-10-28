@@ -1,7 +1,9 @@
 package document
 
 import (
+	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -12,6 +14,8 @@ const MaxFindResults = 200
 const MaxFindText = 4096
 
 type FindOptions struct {
+	Cursor                      string
+	Limit                       int
 	Mode                        string
 	Text                        string
 	Keys, Values, CaseSensitive bool
@@ -24,13 +28,37 @@ type FindMatch struct {
 	Preview  string `json:"preview"`
 }
 type FindResult struct {
-	Matches   []FindMatch `json:"matches"`
-	Truncated bool        `json:"truncated"`
+	NextCursor string      `json:"nextCursor,omitempty"`
+	Matches    []FindMatch `json:"matches"`
+	Truncated  bool        `json:"truncated"`
 }
 
 // Find reads the applied ordered AST; aliases are leaves, never traversed.
 func (d *Document) Find(o FindOptions) (FindResult, error) {
+	return d.FindContext(context.Background(), o)
+}
+
+// FindContext returns a bounded traversal page and honors cancellation.
+func (d *Document) FindContext(ctx context.Context, o FindOptions) (FindResult, error) {
+	if d.compact != nil {
+		return d.compactFind(ctx, o)
+	}
 	result := FindResult{Matches: []FindMatch{}}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	limit := o.Limit
+	if limit <= 0 || limit > MaxFindResults {
+		limit = MaxFindResults
+	}
+	cursor := 0
+	if o.Cursor != "" {
+		var err error
+		cursor, err = strconv.Atoi(o.Cursor)
+		if err != nil || cursor < 0 || cursor > len(d.Nodes) {
+			return result, errors.New("invalid find cursor")
+		}
+	}
 	if len(o.Text) > MaxFindText || !utf8.ValidString(o.Text) {
 		return result, errors.New("find text must be UTF-8 and at most 4096 bytes")
 	}
@@ -55,7 +83,7 @@ func (d *Document) Find(o FindOptions) (FindResult, error) {
 				(o.Values && n.Kind != "object" && n.Kind != "array" && n.Kind != "stream" && contains(n.Value))
 		}
 	case "query":
-		ids, err := d.query(o.Text)
+		ids, err := d.queryContext(ctx, o.Text)
 		if err != nil {
 			return result, err
 		}
@@ -63,11 +91,20 @@ func (d *Document) Find(o FindOptions) (FindResult, error) {
 	default:
 		return result, errors.New("choose search or query mode")
 	}
+	position := 0
+	var cancelled error
 	var visit func(*Node) bool
 	visit = func(n *Node) bool {
-		if match(n) {
-			if len(result.Matches) == MaxFindResults {
+		if err := ctx.Err(); err != nil {
+			cancelled = err
+			return false
+		}
+		current := position
+		position++
+		if current >= cursor && match(n) {
+			if len(result.Matches) == limit {
 				result.Truncated = true
+				result.NextCursor = strconv.Itoa(current)
 				return false
 			}
 			preview := n.Value
@@ -84,7 +121,7 @@ func (d *Document) Find(o FindOptions) (FindResult, error) {
 		return true
 	}
 	visit(d.Root)
-	return result, nil
+	return result, cancelled
 }
 func shortPreview(s string) string {
 	count := 0

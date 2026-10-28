@@ -6,9 +6,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
-func (s *browserSession) conversionPreview(format, text string) map[string]any {
+func (s *browserSession) conversionPreview(format, text string, full ...bool) map[string]any {
+	total := len(text)
+	truncated := total > 65536 && (len(full) == 0 || !full[0])
+	if truncated {
+		end := 65536
+		for end > 0 && !utf8.RuneStart(text[end]) {
+			end--
+		}
+		text = text[:end]
+	}
 	name := filepath.Base(s.filename)
 	if s.path != "" {
 		name = filepath.Base(s.path)
@@ -21,7 +31,7 @@ func (s *browserSession) conversionPreview(format, text string) map[string]any {
 	if s.path != "" {
 		directory = filepath.Dir(s.path)
 	}
-	return map[string]any{"text": text, "format": format, "revision": s.data.Revision, "suggestedFilename": stem + "." + format, "canSaveLocal": s.path != "", "saveDirectory": directory}
+	return map[string]any{"text": text, "truncated": truncated, "totalBytes": total, "format": format, "revision": s.data.Revision, "suggestedFilename": stem + "." + format, "canSaveLocal": s.path != "", "saveDirectory": directory}
 }
 
 func (s *browserSession) convert(format string, revision int, filename *string) (string, error) {

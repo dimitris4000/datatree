@@ -133,8 +133,10 @@ func (s *Server) fileBrowserRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	session := s.session(w, r)
+	s.mu.Unlock()
+	session.mu.Lock()
 	if *in.Revision != session.data.Revision {
-		s.mu.Unlock()
+		session.mu.Unlock()
 		fail(w, errors.New("stale revision; reopen the file picker"))
 		return
 	}
@@ -142,14 +144,14 @@ func (s *Server) fileBrowserRequest(w http.ResponseWriter, r *http.Request) {
 	if path == "" && session.path != "" {
 		path = filepath.Dir(session.path)
 	}
-	s.mu.Unlock()
+	session.mu.Unlock()
 	listing, err := browseDirectory(path, in.ShowHidden)
 	if err != nil {
 		fail(w, fmt.Errorf("browse directory %q: %w", path, err))
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	session.mu.Lock()
+	defer session.mu.Unlock()
 	if *in.Revision != session.data.Revision {
 		fail(w, errors.New("stale revision; reopen the file picker"))
 		return

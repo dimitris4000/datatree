@@ -122,6 +122,7 @@ func TestCSVAndYAMLWorkflows(t *testing.T) {
 				post("/api/history", map[string]any{"revision": 6, "direction": "undo"})
 				var state struct{ Format, Source string }
 				get("/api/state", &state)
+				state.Source = get("/api/source?revision=7", nil)
 				if state.Format != fixture.format {
 					t.Fatal("undo did not restore format")
 				}

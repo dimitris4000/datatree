@@ -143,3 +143,12 @@ test('revert submits the displayed revision/baseline token, serializes and respe
  c.revert = async () => { throw new Error('stale comparison baseline'); };
  assert.equal(await c.revertChange(1), false); assert.match(c.error, /stale/); assert.equal(c.result, prior);
 });
+
+test('cached comparisons reopen without rereading and explicit refresh bypasses the cache', async () => {
+ let calls=0;
+ const {c,changeRevision}=fixture({load:async(kind,revision)=>{calls++;return result(revision,kind);}});
+ await c.setVisible(true);await c.setVisible(false);await c.setVisible(true);
+ assert.equal(calls,1);
+ await c.refresh();assert.equal(calls,2,'explicit Refresh asks for new comparison');
+ changeRevision();await c.setVisible(true);assert.equal(calls,3);
+});

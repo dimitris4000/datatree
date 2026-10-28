@@ -7,12 +7,17 @@ export class FindController {
     this.clear();
   }
   clear() {
+    this.request?.abort();
     this.invalidate();
     this.generation++;
     this.matches = [];
     this.index = -1;
     this.error = '';
     this.truncated = false;
+    this.nextCursor = '';
+    this.pageIndex = 0;
+    this.pageCursors = [''];
+    this.options = null;
     this.loading = false;
     this.navigating = false;
     this.searched = false;
@@ -28,15 +33,18 @@ export class FindController {
       return;
     }
     const generation = this.generation, revision = this.revision();
+    this.options = {...options};
+    this.request = new AbortController();
     this.loading = true;
     this.render(this);
     try {
-      const result = await this.load(options, revision);
+      const result = await this.load(options, revision, this.request.signal);
       if (generation !== this.generation) return;
       if (revision !== this.revision() || result.revision !== revision)
         throw new Error('Document changed; run Find again.');
       this.matches = result.matches;
       this.truncated = result.truncated;
+      this.nextCursor = result.nextCursor || '';
     } catch (error) {
       if (generation === this.generation) this.error = error.message;
     } finally {
@@ -47,6 +55,29 @@ export class FindController {
     }
     if (generation === this.generation && options.mode === 'query' && this.matches.length === 1)
       await this.choose(0);
+  }
+  async page(direction) {
+    if(this.loading || this.navigating || !this.options || ![-1,1].includes(direction)) return false;
+    const index=this.pageIndex+direction;
+    if(index<0 || (direction>0 && !this.nextCursor)) return false;
+    const cursor=direction>0 ? this.nextCursor : this.pageCursors[index];
+    this.request?.abort();this.invalidate();
+    const generation=++this.generation,revision=this.revision();
+    this.request=new AbortController();this.loading=true;this.error='';this.render(this);
+    try {
+      const result=await this.load({...this.options,cursor,limit:200},revision,this.request.signal);
+      if(generation!==this.generation)return false;
+      if(revision!==this.revision() || result.revision!==revision)throw new Error('Document changed; run Find again.');
+      this.matches=result.matches;this.index=-1;this.pageIndex=index;
+      this.pageCursors[index]=cursor;this.pageCursors.length=index+1;
+      this.nextCursor=result.nextCursor || '';this.truncated=result.truncated;
+      return true;
+    } catch(error) {
+      if(generation===this.generation)this.error=error.message;
+      return false;
+    } finally {
+      if(generation===this.generation){this.loading=false;this.render(this);}
+    }
   }
   async choose(index) {
     if (this.loading || this.navigating || !this.matches[index]) return false;
@@ -101,11 +132,14 @@ export function mountFindPanel(document, dependencies) {
       const count = state.matches.length;
       const summary = state.index >= 0 ? `${state.index + 1} of ${count} matches` : `${count} match${count === 1 ? '' : 'es'}`;
       $('status').textContent = state.error || (state.loading ? 'Finding…' : state.searched ?
-        `${summary}${state.truncated ? ' · First 200 only; narrow your search or query.' : ''}` : '');
+        `${state.pageIndex ? `Page ${state.pageIndex+1} · ` : ''}${summary}${state.truncated ? ' · More results available.' : ''}` : '');
       $('status').classList.toggle('error', !!state.error);
       $('results').hidden = !count;
       $('previous').disabled = $('next').disabled = !count || state.loading || state.navigating;
       $('submit').disabled = state.navigating;
+      $('previous-page').hidden = state.pageIndex === 0;
+      $('next-page').hidden = !state.nextCursor;
+      $('previous-page').disabled = $('next-page').disabled = state.loading || state.navigating;
       if (rendered !== state.matches) {
         rendered = state.matches;
         buttons.length = 0;
@@ -150,6 +184,8 @@ export function mountFindPanel(document, dependencies) {
   $('clear').addEventListener('click', () => { $('text').value = ''; controller.clear(); });
   $('previous').addEventListener('click', () => controller.move(-1));
   $('next').addEventListener('click', () => controller.move(1));
+  $('previous-page').addEventListener('click', () => controller.page(-1));
+  $('next-page').addEventListener('click', () => controller.page(1));
   modeHelp();
   return { controller };
 }

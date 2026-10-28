@@ -1,26 +1,30 @@
+import { requestJSON } from "./request.js";
 import { mountDiffPanel } from "./diff.js";
 import { mountFileBrowser } from "./file-browser.js";
 import { mountConversionDialog, downloadConvertedCopy } from "./conversion.js";
 import { mountValidationPanel, canValidateDocument } from "./validation.js";
-import { revealResult, mountFindPanel } from "./find.js";
-import { SourceEditor, normalizedSource, nodeAt, revealPath } from "./source-editor.js";
-import { setupInspectorFolding } from "./folding.js";
+import { mountFindPanel } from "./find.js";
+import { SourceEditor } from "./source-editor.js";
+import { mountInspectorEditors } from "./inspector-editor.js";
 import { TreeCanvas, expandLevels, collapseAll, diffBadge, validationBadge } from "./tree.js";
 import { NodeContextMenu, menuTarget, runNodeAction } from "./context-menu.js";
 const $ = (id) => document.getElementById(id);
 const source = $("source"),
   inspector = $("inspector");
 let state = { revision: 0 },
-  original = "",
-  workingDraft = "",
+  original = null,
+  workingDraft = null,
+  cleanDraft = null,
   sourceDirty = false,
   inspectorDirty = false,
   showOriginal = false,
   busy = false,
   selection = null;
-let records = new Map(),
+let nodeIndices = new Map(),
+  records = new Map(),
   expanded = new Set();
-let sourceRanges = [], sourceByID = new Map(), sourceSync = 0;
+let refreshingCanonical = false;
+let sourceByID = new Map(), sourceSync = 0, inspectorEditors = null, operationAbort = null, inspectorAbort = null;
 function status(message, error = false) {
   $("status").textContent = message;
   $("status").classList.toggle("error", error);
@@ -42,7 +46,7 @@ function ready() {
   }
   return true;
 }
-async function api(path, data) {
+async function api(path, data, signal = operationAbort?.signal) {
   const options =
     data === undefined
       ? {}
@@ -51,17 +55,20 @@ async function api(path, data) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ revision: state.revision, ...data }),
         };
-  const r = await fetch(path, options);
-  const result = await r.json();
-  if (!r.ok) throw new Error(result.error || `Request failed (${r.status})`);
+  const result=await requestJSON(path,{...options,signal},{progress:stage=>status(`Processing document · ${stage}… Cancel is available.`)});
+  if(signal?.aborted&&signal===operationAbort?.signal)operationAbort=new AbortController();
   return result;
 }
 function setBusy(value) {
-  if (value) nodeMenu.close(false);
+  if (value) { nodeMenu.close(false); operationAbort ||= new AbortController(); }
+  else operationAbort = null;
+  $("cancel-operation").hidden = !value || refreshingCanonical;
+  $("cancel-operation").disabled = refreshingCanonical;
+  $("operation-progress").hidden = !value;
   busy = value;
   $("expand-levels").disabled = value;
   $("expand-selected").disabled = value;
-  source.readOnly = value || showOriginal;
+  sourceEditor.readOnly = value || showOriginal;
   document
     .querySelectorAll(".toolbar-actions button,#apply,#example")
     .forEach((b) => (b.disabled = value));
@@ -69,12 +76,31 @@ function setBusy(value) {
     $("undo").disabled = !state.canUndo;
     $("redo").disabled = !state.canRedo;
     $("apply").disabled = showOriginal;
+    $("original-tab").disabled = !state.root;
   }
 }
-function ingest(n) {
+// After a mutation returns metadata, cancellation can no longer roll it back.
+// Finish the canonical view refresh independently of the mutation's old signal.
+function beginCanonicalRefresh() {
+  operationAbort=null;
+  refreshingCanonical=true;
+  $("cancel-operation").hidden=true;
+  $("cancel-operation").disabled=true;
+  status('Refreshing the applied document…');
+}
+async function withProgress(action) {
+  const started=!busy;
+  if(started){setBusy(true);status('Processing document… Cancel is available.');}
+  try{return await action();}finally{if(started)setBusy(false);}
+}
+function ingest(n, nested = false) {
+  // A depth-2 response carries only the first child page. Keep independently
+  // loaded child pages until that child is explicitly refreshed or paged.
+  if(nested&&records.has(n.id))return;
   records.set(n.id, n);
-  for (const c of n.children || []) {
-    if (c.children) ingest(c);
+  for (const [index,c] of (n.children || []).entries()) {
+    nodeIndices.set(c.id,{id:c.id,parent:n.id,index:(n.offset||0)+index});
+    if (c.children) ingest(c, true);
   }
 }
 async function page(id, offset = 0) {
@@ -95,7 +121,6 @@ function updateControls() {
     ? `${state.git.branch || "Detached HEAD"} · ${state.git.commit.slice(0, 8)}` : "";
   git.title = state.git
     ? `${state.git.branch || "Detached HEAD"} · Git HEAD: ${state.git.commit} (working edits stay in memory)` : "";
-  source.value = showOriginal ? original : state.source || workingDraft;
   $("format-badge").textContent = (
     state.format || $("input-format").value
   ).toUpperCase();
@@ -107,83 +132,166 @@ function updateControls() {
   $("revision").textContent = state.root
     ? `Revision ${state.revision} · Changes in memory`
     : "Ready when you are.";
-  $("undo").disabled = !state.canUndo;
-  $("redo").disabled = !state.canRedo;
+  $("undo").disabled = busy || !state.canUndo;
+  $("redo").disabled = busy || !state.canRedo;
   $("empty").hidden = !!state.root;
   $("draft-state").textContent = sourceDirty
     ? "Unapplied changes"
     : "No changes";
-  $("apply").disabled = showOriginal;
+  $("apply").disabled = busy || showOriginal;
+  $("original-tab").disabled = busy || !state.root;
   $("working-tab").classList.toggle("active", !showOriginal);
   $("original-tab").classList.toggle("active", showOriginal);
   $("working-tab").setAttribute("aria-pressed", String(!showOriginal));
   $("original-tab").setAttribute("aria-pressed", String(showOriginal));
-  source.readOnly = showOriginal || busy;
+  sourceEditor.readOnly = showOriginal || busy;
   sourceEditor.refresh();
 }
-async function install(next, { fit = false, imported = false } = {}) {
-  nodeMenu.close(false);
-  findPanel.controller.clear();
-  diffPanel.controller.invalidateDocument(imported);
-  sourceSync++;
-  sourceRanges = [];
-  sourceByID = new Map();
-  state = next;
-  validationPanel.controller.install(state.schema);
-  sourceDirty = false;
-  inspectorDirty = false;
-  workingDraft = state.source || "";
-  selection = null;
-  $("selection-expansion").hidden = true;
-  records = new Map();
-  expanded = new Set();
-  if (imported) original = await fetch("/api/original").then((r) => r.text());
-  updateControls();
-  if (state.root) {
-    const mapping = await api(`/api/source-map?revision=${state.revision}`);
-    sourceRanges = mapping.ranges;
-    sourceByID = new Map(sourceRanges.map(range => [range.id, range]));
-    const root = await page(state.root);
-    expanded.add(root.id);
-    // Open the first level of containers, bounded by the first page.
-    for (const child of root.children || []) {
-      if (["object", "array", "stream"].includes(child.kind)) {
-        await page(child.id);
-        expanded.add(child.id);
-        const childData = records.get(child.id);
-        for (const grandchild of childData.children || []) {
-          if (grandchild.kind === "object") expanded.add(grandchild.id);
-        }
-      }
+// Record only the loaded tree's index paths. Node IDs change with revisions.
+function savedTreePaths() {
+  const path=id=>{
+    if(!id)return null;
+    const indices=[],seen=new Set();
+    while(id!==state.root){
+      if(seen.has(id))return null;seen.add(id);
+      const node=nodeIndices.get(id);if(!node)return null;
+      indices.push(node.index);id=node.parent;
     }
-    tree.install(root, records, expanded);
-    if (fit) tree.fit();
-    await select(root.id, false);
-    if (diffPanel.controller.visible) await diffPanel.controller.refresh();
+    return indices.reverse();
+  };
+  return {expanded:[...expanded].map(path).filter(Boolean),selected:path(selection)};
+}
+async function restoreTreePath(path) {
+  let id=state.root;
+  for(const index of path){
+    const offset=Math.floor(index/20)*20;
+    let parent=records.get(id);
+    if(!parent?.children||(parent.offset||0)!==offset)parent=await page(id,offset);
+    const child=parent.children[index-offset];if(!child)return null;
+    expanded.add(id);id=child.id;
+  }
+  return id;
+}
+async function installStableDraft(next) {
+  const depth=id=>{
+    const seen=new Set();let count=0;
+    for(let node=nodeIndices.get(id);node&&!seen.has(node.id);node=nodeIndices.get(node.parent)){
+      seen.add(node.id);count++;
+    }
+    return count;
+  };
+  const changedPages=[...new Set(next.changedNodes)].filter(id=>records.has(id))
+    .map(id=>({id,offset:records.get(id).offset||0,depth:depth(id)}))
+    .sort((a,b)=>a.depth-b.depth);
+  const refreshed=[];
+  // Snapshot offsets first and refresh root-to-leaf. Root summaries must not
+  // overwrite a previously selected page in a descendant or unrelated branch.
+  for(const {id,offset} of changedPages){
+    refreshed.push(await api(`/api/tree?node=${encodeURIComponent(id)}&offset=${offset}&limit=20&revision=${next.revision}`,undefined,null));
+  }
+  inspectorAbort?.abort();
+  findPanel.controller.clear();
+  diffPanel.controller.invalidateDocument();
+  inspectorEditors?.destroy();inspectorEditors=null;
+  inspector.replaceChildren();
+  sourceSync++;
+  state=next;
+  for(const location of sourceByID.values())location.revision=next.revision;
+  validationPanel.controller.install(state.schema);
+  sourceDirty=false;inspectorDirty=false;showOriginal=false;
+  sourceEditor.markClean();
+  cleanDraft=sourceEditor.snapshot();workingDraft=cleanDraft;
+  for(const record of refreshed)ingest(record);
+  tree.root=records.get(next.root);
+  tree.selected=selection;
+  updateControls();
+  tree.relayout();
+  if(selection)await select(selection,false,false);
+  if(diffPanel.controller.visible)await diffPanel.controller.refresh();
+}
+async function install(next, { fit = false, imported = false, appliedDraft = false, committed = false } = {}) {
+  const wasBusy=busy;
+  if(!wasBusy)setBusy(true);
+  beginCanonicalRefresh();
+  try {
+    nodeMenu.close(false);
+    if(appliedDraft&&next.revision===state.revision+1&&next.stableIDs===true&&Array.isArray(next.changedNodes)&&next.root===state.root){
+      await installStableDraft(next);return;
+    }
+    const saved=imported?null:savedTreePaths();
+    // Complete the two initial reads before replacing the current, possibly dirty UI.
+    let sourceText=null,root=null;
+    if(next.root){
+      if(!appliedDraft){
+        const response=await fetch(`/api/source?revision=${next.revision}`,{signal:null});
+        if(!response.ok)throw new Error(`Source request failed (${response.status})`);
+        sourceText=await response.text();
+      }
+      root=await api(`/api/tree?node=${encodeURIComponent(next.root)}&offset=0&limit=20&revision=${next.revision}`,undefined,null);
+    }
+    inspectorAbort?.abort();
+    findPanel.controller.clear();
+    diffPanel.controller.invalidateDocument(imported);
+    inspectorEditors?.destroy();inspectorEditors=null;
+    inspector.replaceChildren();
+    sourceSync++;
+    sourceByID = new Map();
+    state = next;
+    validationPanel.controller.install(state.schema);
+    sourceDirty = false;
+    inspectorDirty = false;
+    showOriginal=false;
+    if(imported)original=null;
+    if(appliedDraft){sourceEditor.markClean();sourceEditor.setFormat(state.format);}
+    else sourceEditor.setText(sourceText||'',state.format);
+    cleanDraft=sourceEditor.snapshot();workingDraft=cleanDraft;
+    selection = null;
+    $("selection-expansion").hidden = true;
+    records = new Map();nodeIndices = new Map();expanded = new Set();
+    updateControls();
+    if (state.root) {
+      ingest(root);
+      expanded.add(root.id);
+      if(saved){
+        for(const path of saved.expanded){const id=await restoreTreePath(path);if(id){if(!records.has(id))await page(id);expanded.add(id);}}
+        if(saved.selected)selection=await restoreTreePath(saved.selected);
+      }
+      tree.install(root, records, expanded);
+      tree.selected=selection;
+      if (fit) tree.fit();
+      if(selection)await select(selection,false);
+      if (diffPanel.controller.visible) await diffPanel.controller.refresh();
+    }
+  } catch(error) {
+    throw new Error(committed?`Changes committed at revision ${next.revision}, but refreshing the view failed: ${error.message}`:`Document revision ${next.revision} could not be loaded: ${error.message}`,{cause:error});
+  } finally {
+    refreshingCanonical=false;
+    if(!wasBusy)setBusy(false);
   }
 }
 async function operation(path, data, options = {}) {
   if (!ready() || !canLeaveInspector()) return;
   setBusy(true);
+  status("Processing document… Cancel is available.");
   try {
-    await install(await api(path, data), options);
+    await install(await api(path, data), {...options,committed:true});
     status(
       options.imported
         ? (state.schema ? `File opened. Attached ${state.schema.filename}; press Validate to check it.` : "File opened. Click a field or card to inspect it.")
         : "Changes applied. Download to save a copy.",
     );
   } catch (e) {
-    status(e.message, true);
+    status(e.name === "AbortError" ? "Operation cancelled." : e.message, true);
   } finally {
     setBusy(false);
   }
 }
 async function select(id, guard = true, syncSource = true) {
   if (guard && !canLeaveInspector()) return;
-  if (syncSource) {
-    sourceSync++;
-    if (sourceSynchronized()) sourceEditor.highlight(sourceByID.get(id));
-  }
+  if (syncSource) sourceSync++;
+  const revision=state.revision;
+  inspectorAbort?.abort();inspectorAbort=new AbortController();
+  const signal=inspectorAbort.signal;
   selection = id;
   tree.selected = id;
   document.querySelectorAll('#node-list button[data-node-id]').forEach(button => {
@@ -195,21 +303,26 @@ async function select(id, guard = true, syncSource = true) {
     !["object", "array", "stream"].includes(node.kind);
   tree.draw();
   try {
-    if (globalThis.htmx) {
-      await htmx.ajax(
-        "GET",
-        `/inspector?node=${encodeURIComponent(id)}&revision=${state.revision}`,
-        { target: "#inspector", swap: "innerHTML" },
-      );
-    } else {
-      throw new Error("htmx failed to load. Reload this page.");
+    inspectorEditors?.destroy(); inspectorEditors=null;
+    if(syncSource&&sourceSynchronized()){
+      const location=await nodeLocation(id);
+      if(signal.aborted||revision!==state.revision||selection!==id)return;
+      sourceEditor.highlight(location.range);
     }
+    const response=await fetch(`/inspector?node=${encodeURIComponent(id)}&revision=${revision}`,{signal});
+    if(!response.ok)throw new Error(`Inspector request failed (${response.status})`);
+    const html=await response.text();
+    if(signal.aborted||revision!==state.revision||selection!==id)return;
+    inspector.innerHTML=html;
+    globalThis.htmx?.process(inspector);
+    mountSelectedInspector();
     inspectorDirty = false;
     validationPanel.selectionChanged();
   } catch (e) {
-    status(e.message, true);
+    if(!signal.aborted&&revision===state.revision)status(e.message, true);
   }
 }
+
 const nodeMenu = new NodeContextMenu($("node-context-menu"), async (op, target) => {
   if (target.revision !== state.revision) return;
   await runNodeAction(op, target, state.format, {
@@ -285,45 +398,59 @@ const tree = new TreeCanvas($("canvas"), {
   context: openNodeMenu,
 });
 function sourceSynchronized() {
-  return !!state.root && source.value === normalizedSource(state.source || "");
+  return !!state.root && (showOriginal ? state.originalMatches === true : !sourceDirty);
 }
-const sourceEditor = new SourceEditor(source, $("source-lines"), $("source-position"), async (start, end) => {
-  if (busy || !sourceSynchronized()) return;
-  const target = nodeAt(sourceRanges, start, end);
-  if (!target || target.id === selection || !canLeaveInspector()) return;
-  const ticket = ++sourceSync, revision = state.revision;
-  const current = () => ticket === sourceSync && revision === state.revision && sourceSynchronized();
-  try {
-    for (const step of revealPath(sourceByID, target.id)) {
-      const record = records.get(step.id);
-      if (!record?.children || (record.offset || 0) !== step.offset) await page(step.id, step.offset);
-      if (!current()) return;
-      expanded.add(step.id);
-    }
-    if (!current()) return;
-    tree.relayout();
-    await select(target.id, false, false);
-    if (current()) tree.focus(target.id);
-  } catch (error) {
-    if (current()) status(error.message, true);
+async function nodeLocation(id) {
+  if(sourceByID.has(id))return sourceByID.get(id);
+  const result=await api(`/api/node-location?revision=${state.revision}&node=${encodeURIComponent(id)}`);
+  if(result.revision===state.revision)sourceByID.set(id,result);
+  return result;
+}
+async function revealLocation(location,current) {
+  if(!location.range||!current())return false;
+  for(const step of location.ancestors||[]){
+    const record=records.get(step.id);
+    if(!record?.children||(record.offset||0)!==step.offset)await page(step.id,step.offset);
+    if(!current())return false;
+    expanded.add(step.id);
   }
+  tree.relayout(new Set([...(location.ancestors||[]).map(step=>step.id),location.range.id]));
+  return current();
+}
+const sourceEditor = new SourceEditor(source, null, $("source-position"), async (start, end) => {
+  if (busy || !sourceSynchronized()) return;
+  const ticket=++sourceSync,revision=state.revision;
+  const current=()=>ticket===sourceSync&&revision===state.revision&&sourceSynchronized();
+  try{
+    const target=await api(`/api/locate?revision=${revision}&start=${start}&end=${end}`);
+    if(!current()||!target.range||target.range.id===selection||!canLeaveInspector())return;
+    sourceByID.set(target.range.id,target);
+    if(!await revealLocation(target,current))return;
+    await select(target.range.id,false,false);
+    if(current())tree.focus(target.range.id);
+  }catch(error){if(current())status(error.message,true);}
+}, dirty => {
+  sourceSync++;nodeMenu.close(false);
+  if(showOriginal)return;
+  sourceDirty=dirty;
+  $("draft-state").textContent=sourceDirty?"Unapplied changes":"No changes";
 });
-// Reuse the source map to reveal matches without downloading an expanded tree.
+// Indexed lookup reveals only the ancestor pages of a match.
 const findPanel = mountFindPanel(document, {
   invalidate: () => { sourceSync++; },
   revision: () => state.revision,
-  load: async (options, revision) => {
+  load: async (options, revision, signal) => {
     if (!state.root) throw new Error("Open a file first.");
     const query = new URLSearchParams({ ...options, revision });
-    return api(`/api/find?${query}`);
+    return api(`/api/find?${query}`, undefined, signal);
   },
   navigate: navigateNode,
 });
 const diffPanel = mountDiffPanel(document, {
   revision: () => state.revision,
   invalidate: () => { sourceSync++; },
-  load: (baseline, revision) => api(`/api/diff?${new URLSearchParams({ baseline, revision })}`),
-  upload: (payload, revision) => api("/api/diff-baseline", { ...payload, revision }),
+  load: (baseline, revision) => withProgress(()=>api(`/api/diff?${new URLSearchParams({ baseline, revision })}`)),
+  upload: (payload, revision) => withProgress(()=>api("/api/diff-baseline", { ...payload, revision })),
   pickFile: () => fileBrowser.pick('comparison'),
   navigate: navigateNode,
   revert: async (payload, revision) => {
@@ -332,7 +459,7 @@ const diffPanel = mountDiffPanel(document, {
     setBusy(true);
     try {
       const next = await api("/api/diff-revert", { ...payload, revision });
-      await install(next);
+      await install(next,{committed:true});
       status("Change reverted. Undo restores it; download to save a copy.");
       return true;
     } finally {
@@ -347,7 +474,7 @@ const validationPanel = mountValidationPanel(document, {
   attach: (payload, revision) => api('/api/schema', { ...payload, revision }),
   pickFile: () => fileBrowser.pick('schema'),
   clear: revision => api('/api/schema-clear', { revision }),
-  validate: (revision, schemaToken) => api('/api/validate', { revision, schemaToken }),
+  validate: (revision, schemaToken) => withProgress(()=>api('/api/validate', { revision, schemaToken })),
   navigate: navigateNode,
   selected: () => selection,
   highlight: marks => tree.setValidationMarks(marks),
@@ -358,12 +485,9 @@ async function navigateNode(id) {
   const current = () => ticket === sourceSync && revision === state.revision && !sourceDirty;
   setBusy(true);
   try {
-    const revealed = await revealResult(id, {
-      ranges: sourceByID, records, expanded, load: page, current,
-      relayout: (priority) => { tree.relayout(priority); return tree.graph; },
-    });
-    if (!revealed) return false;
-    if (sourceSynchronized()) sourceEditor.highlight(sourceByID.get(id));
+    const location=await nodeLocation(id);
+    if(!await revealLocation(location,current))return false;
+    if(sourceSynchronized())sourceEditor.highlight(location.range);
     await select(id, false, false);
     if (!current()) return false;
     tree.focus(id);
@@ -404,33 +528,19 @@ async function action(hit) {
       tree.relayout();
     }
   } catch (e) {
-    status(e.message, true);
+    status(e.name === "AbortError" ? "Operation cancelled." : e.message, true);
   }
 }
-source.addEventListener("input", () => {
-  sourceSync++;
-  nodeMenu.close(false);
-  if (showOriginal) return;
-  workingDraft = source.value;
-  sourceDirty = source.value !== normalizedSource(state.source || "");
-  $("draft-state").textContent = sourceDirty
-    ? "Unapplied changes"
-    : "No changes";
-});
-source.addEventListener("keydown", (e) => {
-  if (e.key === "Tab") {
-    e.preventDefault();
-    source.setRangeText(
-      "  ",
-      source.selectionStart,
-      source.selectionEnd,
-      "end",
-    );
-    source.dispatchEvent(new Event("input"));
-  }
-});
+function mountSelectedInspector() {
+  inspectorEditors?.destroy();
+  inspectorEditors=mountInspectorEditors(inspector,{
+    revision:state.revision,format:state.format,
+    load:(node,format,full,signal)=>api(`/api/representation?${new URLSearchParams({revision:state.revision,node,format,full})}`,undefined,signal),
+    changed:()=>{inspectorDirty=true;},status,
+  });
+}
 document.body.addEventListener("htmx:afterSwap", (event) => {
-  if (event.detail.target === inspector) setupInspectorFolding(inspector);
+  if (event.detail.target === inspector) mountSelectedInspector();
 });
 inspector.addEventListener("input", () => {
   inspectorDirty = true;
@@ -440,40 +550,45 @@ $("apply").addEventListener("click", async () => {
   setBusy(true);
   try {
     const imported = !state.root;
-    const next = await api(imported ? "/api/import" : "/api/apply", {
-      text: source.value,
-      format: state.format || $("input-format").value,
-    });
-    await install(next, { fit: imported, imported });
+    status("Validating source… Cancel is available.");
+    const next = imported ? await api("/api/import", {text:sourceEditor.getText(),format:$("input-format").value}) :
+      await api("/api/patch", {patches:sourceEditor.patches()});
+    await install(next, { fit: imported, imported, appliedDraft:true, committed:true });
     status("Source applied. The tree shows the validated document.");
   } catch (e) {
-    status(e.message, true);
+    status(e.name === "AbortError" ? "Operation cancelled." : e.message, true);
   } finally {
     setBusy(false);
   }
 });
 $("discard").addEventListener("click", () => {
-  workingDraft = state.source || "";
+  if(cleanDraft)sourceEditor.restore(cleanDraft);else sourceEditor.setText("",state.format);
+  workingDraft=sourceEditor.snapshot();
   sourceDirty = false;
   updateControls();
   status("Source draft discarded.");
 });
-function sourceTab(isOriginal) {
+async function sourceTab(isOriginal) {
+  if(busy||showOriginal===isOriginal)return;
   sourceSync++;
-  if (!showOriginal) workingDraft = source.value;
-  showOriginal = isOriginal;
+  if(!showOriginal)workingDraft=sourceEditor.snapshot();
+  if(isOriginal){
+    setBusy(true);status("Loading original source…");
+    try{
+      if(original===null){
+        const response=await fetch(`/api/source?revision=${state.revision}&original=true`,{signal:operationAbort.signal});
+        if(!response.ok)throw new Error(`Original source request failed (${response.status})`);
+        original=await response.text();
+      }
+      sourceEditor.setText(original,state.format);showOriginal=true;
+    }catch(error){status(error.message,true);}
+    finally{setBusy(false);}
+  }else{sourceEditor.restore(workingDraft);showOriginal=false;}
   updateControls();
-  if (!isOriginal) {
-    source.value = workingDraft;
-    $("draft-state").textContent = sourceDirty
-      ? "Unapplied changes"
-      : "No changes";
-  }
-  sourceEditor.refresh();
-  if (sourceSynchronized()) sourceEditor.highlight(sourceByID.get(selection));
 }
-$("working-tab").addEventListener("click", () => sourceTab(false));
-$("original-tab").addEventListener("click", () => sourceTab(true));
+$("working-tab").addEventListener("click", () => void sourceTab(false));
+$("original-tab").addEventListener("click", () => void sourceTab(true));
+$("cancel-operation").addEventListener("click",()=>{operationAbort?.abort();$("cancel-operation").disabled=true;status("Cancelling operation…");});
 const fileBrowser = mountFileBrowser(document, {
   revision: () => state.revision,
   browse: payload => api('/api/files', payload),
@@ -482,7 +597,7 @@ const fileBrowser = mountFileBrowser(document, {
   open: async payload => {
     setBusy(true);
     try {
-      await install(await api('/api/open', payload), { fit: true, imported: true });
+      await install(await api('/api/open', payload), { fit: true, imported: true, committed:true });
       status(state.schema ? `File opened. Attached ${state.schema.filename}; press Validate to check it.` : 'File opened.');
       return true;
     } finally { setBusy(false); }
@@ -525,10 +640,16 @@ $("download").addEventListener("click", () => {
 });
 const conversionDialog = mountConversionDialog(document, {
   revision: () => state.revision,
-  preview: format => api('/api/preview', { format }),
+  preview: format => withProgress(()=>api('/api/preview', { format })),
   convert: payload => api('/api/convert', payload),
-  install,
+  install:next=>install(next,{committed:true}),
+  getSource:async revision=>{
+    const response=await fetch(`/api/source?revision=${revision}`,{signal:operationAbort?.signal});
+    if(!response.ok)throw new Error(`Download source request failed (${response.status})`);
+    return response.text();
+  },
   download: (text, filename) => downloadConvertedCopy(document, text, filename),
+  cancelOperation:()=>operationAbort?.abort(),
   busy: setBusy,
   status,
   ready: () => ready() && canLeaveInspector(),
@@ -538,7 +659,7 @@ $("convert").addEventListener("click", async () => {
   try {
     await conversionDialog.open($("conversion-format").value);
   } catch (e) {
-    status(e.message, true);
+    status(e.name === "AbortError" ? "Operation cancelled." : e.message, true);
   }
 });
 $("zoom-in").addEventListener("click", () => tree.zoom(1.2));
@@ -556,7 +677,7 @@ $("expand-selected").addEventListener("click", () => {
 });
 $("collapse").addEventListener("click", () => {
   if (busy) return;
-  collapseAll(selection, sourceRanges, expanded);
+  collapseAll(selection, [...nodeIndices.values()], expanded);
   tree.relayout();
   tree.fit();
 });
@@ -566,7 +687,7 @@ document.body.addEventListener("click", async (e) => {
   if (b.dataset.copy) {
     try {
       const n = $(b.dataset.copy);
-      await navigator.clipboard.writeText(n.value ?? n.textContent);
+      await navigator.clipboard.writeText(n.dataset.representationNode ? inspectorEditors.copyText(n) : n.value ?? n.textContent);
       status("Copied to clipboard.");
     } catch {
       status(
@@ -580,39 +701,75 @@ document.body.addEventListener("click", async (e) => {
     tree.focus(b.dataset.reference);
   }
 });
-document.body.addEventListener("htmx:confirm", (e) => {
-  const form = e.detail.elt;
-  if (!form.closest("#inspector")) return;
-  if (!ready()) {
-    e.preventDefault();
-    return;
+function inspectorError(form,message) {
+  let error=form.querySelector('[data-inspector-error]');
+  if(!error){
+    error=document.createElement('p');error.dataset.inspectorError='true';
+    error.className='error';error.setAttribute('role','alert');form.prepend(error);
   }
-  const button = e.detail.triggeringEvent?.submitter;
-  if (
-    button?.dataset.destructive &&
-    !confirm("Delete this node and its subtree? You can undo this change.")
-  ) {
-    e.preventDefault();
-    return;
+  error.textContent=message;
+  status(message,true);
+}
+function inspectorAction(form,config={}) {
+  const submitter=config.triggeringEvent?.submitter;
+  const parameters=config.parameters??Object.fromEntries(new form.ownerDocument.defaultView.FormData(form,submitter));
+  const value=name=>{const entry=parameters[name];return String((Array.isArray(entry)?entry.at(-1):entry)??'');};
+  const revision=Number(value('revision'));
+  if(!value('revision')||!Number.isSafeInteger(revision)||revision!==state.revision)throw new Error('Selection is stale. Select the node again.');
+  const action={revision,op:value('op'),node:value('node'),key:value('key'),text:value('text'),format:value('format'),confirm:value('confirm')==='true',structured:value('structured')==='true'};
+  if(!action.op||!action.node)throw new Error('Choose a node and an edit action.');
+  const placeholder=form.querySelector('[data-representation-node][data-format="native"]');
+  if(placeholder){
+    if(placeholder.dataset.representationFull!=='true')throw new Error('Load complete text before applying this subtree.');
+    action.text=inspectorEditors.copyText(placeholder);
+    placeholder.value=action.text;
   }
-  setBusy(true);
-});
-document.body.addEventListener("htmx:afterRequest", (e) => {
-  if (e.detail.elt.closest?.("#inspector")) setBusy(false);
-});
-document.body.addEventListener("htmx:responseError", () => {
-  setBusy(false);
-  status("Inspector request failed. Your working document is unchanged.", true);
-});
-document.body.addEventListener("documentChanged", async () => {
-  try {
-    await install(await api("/api/state"));
-    status("Tree edit applied. Download to save a copy.");
-  } catch (e) {
-    status(e.message, true);
-  } finally {
-    setBusy(false);
+  if(action.structured){
+    const kind=value('kind'),raw=value('value');
+    if(kind==='string')action.text=JSON.stringify(raw);
+    else if(kind==='null')action.text='null';
+    else{
+      let parsed;
+      try{parsed=JSON.parse(raw);}catch{throw new Error('Value does not match the selected type.');}
+      if(!['number','boolean'].includes(kind)||typeof parsed!==kind)throw new Error('Value does not match the selected type.');
+      // Validate the kind without reserializing numbers through JavaScript floats.
+      action.text=raw;
+    }
+    action.format='json';
   }
+  return action;
+}
+async function submitInspector(form,config) {
+  if(!ready())return;
+  try{
+    const action=inspectorAction(form,config);
+    if(action.op==='delete'&&!confirm('Delete this node and its subtree? You can undo this change.'))return;
+    const error=form.querySelector('[data-inspector-error]');if(error)error.textContent='';
+    setBusy(true);status('Validating Inspector edit… Cancel is available.');
+    const next=await api('/api/edit',action);
+    await install(next,{committed:true});
+    status('Tree edit applied. Download to save a copy.');
+  }catch(error){
+    inspectorDirty=true;
+    inspectorError(form,error.name==='AbortError'?'Inspector edit cancelled. Unapplied edit retained.':error.message);
+  }finally{setBusy(false);}
+}
+document.body.addEventListener('htmx:confirm',event=>{
+  const form=event.detail.elt?.closest?.('form');
+  if(!form?.closest('#inspector'))return;
+  if(!ready()){event.preventDefault();return;}
+  const placeholder=form.querySelector('[data-representation-node][data-format="native"]');
+  if(placeholder&&placeholder.dataset.representationFull!=='true'){
+    event.preventDefault();inspectorError(form,'Load complete text before applying this subtree.');
+  }
+});
+document.body.addEventListener('htmx:beforeRequest',event=>{
+  const form=event.detail.elt?.closest?.('form');
+  if(!form?.closest('#inspector'))return;
+  // All Inspector writes use the same tracked job protocol as other mutations.
+  // Stop htmx before its XHR starts; its collected parameters include submitter op.
+  event.preventDefault();
+  void submitInspector(form,event.detail.requestConfig);
 });
 for (const [id, property, sign, min, max] of [
   ["resize-source", "--source-width", 1, 180, 550],

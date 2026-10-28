@@ -1,6 +1,7 @@
 package document
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -141,6 +142,13 @@ func CompileSchema(source []byte) (*CompiledSchema, error) {
 }
 
 func ValidateSchema(d *Document, s *CompiledSchema) (ValidationResult, error) {
+	if d != nil && d.compact != nil {
+		legacy, err := d.materialize(context.Background())
+		if err != nil {
+			return ValidationResult{}, err
+		}
+		return ValidateSchema(legacy, s)
+	}
 	result := ValidationResult{Complete: true, Diagnostics: []ValidationDiagnostic{}, Marks: map[string]ValidationMark{}}
 	if d == nil || s == nil {
 		return result, errors.New("open a document and attach a schema first")

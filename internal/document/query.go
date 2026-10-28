@@ -1,6 +1,7 @@
 package document
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -221,9 +222,17 @@ func (p *queryParser) predicate() (*queryFilter, error) {
 
 const queryWorkLimit = 1000000
 
-type queryWork struct{ remaining int }
+type queryWork struct {
+	remaining int
+	ctx       context.Context
+}
 
 func (w *queryWork) spend() error {
+	if w.ctx != nil {
+		if err := w.ctx.Err(); err != nil {
+			return err
+		}
+	}
 	w.remaining--
 	if w.remaining < 0 {
 		return errors.New("query work limit exceeded; use a more specific path")
@@ -253,6 +262,15 @@ func queryChild(n *Node, s queryStep, w *queryWork) (*Node, error) {
 	return nil, nil
 }
 func (d *Document) query(text string) (map[string]bool, error) {
+	return d.queryContext(context.Background(), text)
+}
+func (d *Document) queryContext(ctx context.Context, text string) (map[string]bool, error) {
+	if d.compact != nil {
+		return d.compactQuery(ctx, text)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	p := queryParser{text: strings.TrimSpace(text)}
 	if !p.take("$") {
 		return nil, p.syntax()
@@ -271,7 +289,7 @@ func (d *Document) query(text string) (map[string]bool, error) {
 	if d.Root.Kind == "stream" {
 		return nil, errors.New("path queries do not support YAML document streams; use Search")
 	}
-	w := &queryWork{remaining: queryWorkLimit}
+	w := &queryWork{remaining: queryWorkLimit, ctx: ctx}
 	current := []*Node{d.Root}
 	for _, s := range steps {
 		next := []*Node{}

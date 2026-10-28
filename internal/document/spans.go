@@ -47,7 +47,11 @@ func skipProperties(b []byte, p int) int {
 	}
 	return p
 }
-func flowEnd(b []byte, start int) int {
+func flowEnd(b []byte, start int) int { return flowEndIndexed(b, start, make(map[int]int)) }
+
+// Cache every nested collection encountered by the outer scan. The parser can
+// then request each child span without rescanning all of its descendants.
+func flowEndIndexed(b []byte, start int, ends map[int]int) int {
 	p := skipProperties(b, start)
 	if p >= len(b) {
 		return p
@@ -55,7 +59,10 @@ func flowEnd(b []byte, start int) int {
 	if b[p] != '{' && b[p] != '[' {
 		return scalarEnd(b, start, &yaml.Node{Kind: yaml.ScalarNode})
 	}
-	depth := 0
+	if end, ok := ends[p]; ok {
+		return end
+	}
+	stack := []int{}
 	for i := p; i < len(b); i++ {
 		switch b[i] {
 		case '"', '\'':
@@ -65,10 +72,16 @@ func flowEnd(b []byte, start int) int {
 				i++
 			}
 		case '{', '[':
-			depth++
+			if cached, ok := ends[i]; ok && i != p {
+				i = cached - 1
+				continue
+			}
+			stack = append(stack, i)
 		case '}', ']':
-			depth--
-			if depth == 0 {
+			open := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			ends[open] = i + 1
+			if len(stack) == 0 {
 				return i + 1
 			}
 		}

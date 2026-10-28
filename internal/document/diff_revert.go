@@ -1,6 +1,7 @@
 package document
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,6 +19,31 @@ func rawWalk(n *yaml.Node, visit func(*yaml.Node)) {
 // RevertDiff recomputes the selected difference and grafts its full baseline
 // node, never its display preview. All modifications happen on a private clone.
 func (d *Document) RevertDiff(base *Document, index int) (*Document, error) {
+	if base == nil {
+		return nil, errors.New("open a document and choose a comparison baseline")
+	}
+	if d.compact != nil || base != nil && base.compact != nil {
+		legacy, err := d.materialize(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		other, err := base.materialize(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		next, err := legacy.RevertDiff(other, index)
+		if d.compact != nil {
+			return d.compactFallbackResult(context.Background(), next, err)
+		}
+		return next, err
+	}
+	if d.incremental {
+		canonical, err := d.parse(d.Format, d.Source)
+		if err != nil {
+			return nil, err
+		}
+		return canonical.RevertDiff(base, index)
+	}
 	result, err := Diff(base, d)
 	if err != nil {
 		return nil, err

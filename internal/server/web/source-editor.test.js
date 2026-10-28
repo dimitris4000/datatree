@@ -22,56 +22,65 @@ test('line coordinates include trailing blank lines, Unicode and CRLF normalizat
  assert.equal(editor.normalizedSource('a\r\nb\rc'),'a\nb\nc');
 });
 
-globalThis.getComputedStyle ??= () => ({});
-globalThis.ResizeObserver ??= class { observe() {} };
+import { editorDOM } from './editor-dom-test.js';
 
-function editorFixture(text) {
- const listeners = new Map();
- const doc = {
-  createElement: tag => ({tagName:tag,style:{},children:[],setAttribute(){},append(...children){this.children.push(...children);},replaceChildren(...children){this.children=children;}}),
-  createTextNode: text => ({textContent:text}),
-  createDocumentFragment: () => ({children:[],append(child){this.children.push(child);}}),
-  addEventListener() {},
- };
- const source = {value:text,ownerDocument:doc,selectionStart:0,selectionEnd:0,scrollTop:0,scrollLeft:0,clientHeight:60,clientWidth:200,
-  before(){},addEventListener(type,fn){listeners.set(type,fn);},
-  setSelectionRange(start,end){this.selectionStart=start;this.selectionEnd=end;listeners.get('select')?.();},
- };
- const gutter=doc.createElement('div');gutter.parentElement={style:{setProperty(){}}};
- const position={textContent:''}, selections=[];
- return {source,gutter,position,listeners,selections};
-}
-
-test('editor highlights and scrolls tree selections without stealing focus or feeding back', async (t) => {
- t.mock.method(globalThis,'getComputedStyle',() => ({lineHeight:'20',paddingTop:'18',fontSize:'11'}));
- t.mock.method(globalThis,'ResizeObserver',class { observe() {} });
- const fixture=editorFixture('first\nsecond\nthird\nfourth');
- const {source,gutter,position,selections}=fixture;
- const view=new editor.SourceEditor(source,gutter,position,(...range)=>selections.push(range));
- view.highlight({start:6,end:12});
- assert.deepEqual([source.selectionStart,source.selectionEnd],[6,12]);
- assert.equal(position.textContent,'Ln 2, Col 7');
- assert.equal(view.mirrorText.children[1].textContent,'second');
- assert.equal(gutter.children[0].children[1].className,'source-line active');
- await new Promise(resolve=>setTimeout(resolve,130));
- assert.deepEqual(selections,[],'programmatic selection must not loop back');
+test('CodeMirror keeps viewport DOM bounded and incremental edits produce base UTF16 patches', () => {
+ const {dom,host,position}=editorDOM();
+ const changes=[];
+ const view=new editor.SourceEditor(host,null,position,()=>{},()=>changes.push(true));
+ const text='😀 first\n'+ 'row\n'.repeat(100000);
+ view.setText(text,'json');
+ assert.ok(host.querySelectorAll('.cm-line').length<200,'only viewport lines rendered');
+ assert.equal(host.querySelector('textarea'),null,'no whole-document textarea or mirror');
+ view.view.dispatch({changes:{from:3,to:8,insert:'next'}});
+ view.view.dispatch({changes:{from:3,to:7,insert:'changed'}});
+ assert.deepEqual(view.patches(),[{start:3,end:8,text:'changed'}]);
+ assert.equal(changes.length,2);
+ assert.equal(view.dirty,true);
+ view.destroy();dom.window.close();
 });
 
-test('editor user selections notify once, line numbers follow scrolling and drafts', async (t) => {
- t.mock.method(globalThis,'getComputedStyle',() => ({lineHeight:'20',paddingTop:'18',fontSize:'11'}));
- t.mock.method(globalThis,'ResizeObserver',class { observe() {} });
- const fixture=editorFixture('a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n');
- const {source,gutter,position,listeners,selections}=fixture;
- const view=new editor.SourceEditor(source,gutter,position,(...range)=>selections.push(range));
- source.selectionStart=2;source.selectionEnd=3;
- listeners.get('select')();listeners.get('keyup')();
+test('selection highlight does not steal focus or echo and readOnly is enforced by editor state', async () => {
+ const {dom,host,position}=editorDOM();
+ const selections=[];
+ const view=new editor.SourceEditor(host,null,position,(...range)=>selections.push(range));
+ view.setText('first\n😀 next','json');
+ view.highlight({start:6,end:8});
+ assert.equal(view.view.state.selection.main.from,6);
+ assert.equal(position.textContent,'Ln 2, Col 3');
+ assert.notEqual(dom.window.document.activeElement,view.view.contentDOM);
  await new Promise(resolve=>setTimeout(resolve,130));
- assert.deepEqual(selections,[[2,3]]);
- source.scrollTop=100;listeners.get('scroll')();
- assert.equal(gutter.children[0].children[0].textContent,'5');
- assert.ok(gutter.children[0].children.length<11,'gutter renders visible lines only');
- source.value='a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nnew\n';
- listeners.get('input')();
- assert.equal(view.starts.length,12);
- assert.equal(position.textContent,'Ln 2, Col 2');
+ assert.deepEqual(selections,[]);
+ view.readOnly=true;
+ assert.equal(view.view.state.readOnly,true);
+ view.view.dispatch({selection:{anchor:1}});
+ await new Promise(resolve=>setTimeout(resolve,130));
+ assert.deepEqual(selections,[[1,1]]);
+ view.destroy();dom.window.close();
+});
+
+test('editor snapshot preserves a draft when switching original source', () => {
+ const {dom,host,position}=editorDOM();
+ const view=new editor.SourceEditor(host,null,position,()=>{});
+ view.setText('a\r\nb','yaml');
+ view.view.dispatch({changes:{from:2,insert:'x'}});
+ const draft=view.snapshot();
+ view.setText('original','yaml');
+ view.restore(draft);
+ assert.equal(view.getText(),'a\nxb');
+ assert.deepEqual(view.patches(),[{start:2,end:2,text:'x'}]);
+ view.destroy();dom.window.close();
+});
+
+test('keyboard Tab uses the editor command and exposes a labelled textbox', () => {
+ const {dom,host,position}=editorDOM();
+ const view=new editor.SourceEditor(host,null,position);
+ view.setText('value','json');
+ const content=host.querySelector('.cm-content');
+ assert.equal(content.getAttribute('aria-label'),'Document source');
+ assert.equal(content.getAttribute('role'),'textbox');
+ content.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Tab',keyCode:9,bubbles:true,cancelable:true}));
+ assert.equal(view.getText(),'  value');
+ assert.deepEqual(view.patches(),[{start:0,end:0,text:'  '}]);
+ view.destroy();dom.window.close();
 });

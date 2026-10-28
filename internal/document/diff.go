@@ -1,6 +1,7 @@
 package document
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,6 +68,20 @@ func diffValue(n *Node, d *Document) *DiffValue {
 // Diff compares parsed structure. IDs and navigation targets always refer to the
 // working document; a removed node targets its nearest surviving parent.
 func Diff(base, working *Document) (DiffResult, error) {
+	if base != nil && base.compact != nil {
+		legacy, err := base.materialize(context.Background())
+		if err != nil {
+			return DiffResult{}, err
+		}
+		base = legacy
+	}
+	if working != nil && working.compact != nil {
+		legacy, err := working.materialize(context.Background())
+		if err != nil {
+			return DiffResult{}, err
+		}
+		working = legacy
+	}
 	r := DiffResult{Changes: []DiffChange{}, Marks: map[string]DiffMark{}}
 	if base == nil || working == nil {
 		return r, errors.New("open a document and choose a comparison baseline")

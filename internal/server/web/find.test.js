@@ -1,5 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+
+test('result pages stay bounded and can return to an earlier page', async () => {
+ const {FindController}=await import('./find.js');
+ const calls=[];
+ const controller=new FindController({revision:()=>1,navigate:async()=>true,render:()=>{},load:async options=>{
+  calls.push(options.cursor||'');
+  return {revision:1,matches:options.cursor?[{id:'3'},{id:'4'}]:[{id:'1'},{id:'2'}],truncated:!options.cursor,nextCursor:options.cursor?'':'2'};
+ }});
+ await controller.submit({mode:'search',text:'x',values:true});
+ assert.equal(await controller.page(1),true);
+ assert.deepEqual(controller.matches.map(m=>m.id),['3','4']);
+ assert.equal(controller.pageIndex,1);
+ assert.equal(await controller.page(1),false);
+ assert.equal(await controller.page(-1),true);
+ assert.deepEqual(controller.matches.map(m=>m.id),['1','2']);
+ assert.deepEqual(calls,['','2','']);
+ controller.clear();assert.equal(controller.nextCursor,'');assert.equal(controller.pageIndex,0);
+});
+
+test('failed result page keeps the current matches and page position', async () => {
+ const {FindController}=await import('./find.js');
+ const controller=new FindController({revision:()=>1,navigate:async()=>true,render:()=>{},load:async options=>{
+  if(options.cursor)throw new Error('page unavailable');
+  return {revision:1,matches:[{id:'1'}],truncated:true,nextCursor:'1'};
+ }});
+ await controller.submit({mode:'search',text:'x',values:true});
+ assert.equal(await controller.page(1),false);
+ assert.equal(controller.pageIndex,0);assert.equal(controller.matches[0].id,'1');
+ assert.equal(controller.error,'page unavailable');
+});
 import { FindController, revealResult } from './find.js';
 import { layout } from './tree.js';
 
@@ -122,7 +152,7 @@ function panelDocument() {
     setAttribute(k, v) { this.attributes.set(k, v); }
     set innerHTML(_) { throw new Error('result content must be text'); }
   }
-  const elements = new Map(['form', 'mode', 'text', 'keys', 'values', 'case', 'options', 'help', 'status', 'results', 'submit', 'clear', 'previous', 'next'].map(id => [`find-${id}`, new Element()]));
+  const elements = new Map(['form', 'mode', 'text', 'keys', 'values', 'case', 'options', 'help', 'status', 'results', 'submit', 'clear', 'previous', 'next','previous-page','next-page'].map(id => [`find-${id}`, new Element()]));
   elements.get('find-mode').value = 'search'; elements.get('find-keys').checked = elements.get('find-values').checked = true;
   return { getElementById: id => elements.get(id), createElement: tag => new Element(tag), elements };
 }
@@ -147,3 +177,14 @@ test('mounted panel submits scope, displays safe results and updates query help'
   assert.equal($('options').hidden, true); assert.match($('help').textContent, /\$\.services/);
   assert.equal($('results').hidden, true);
 });
+
+ test('clearing Find aborts the actual request signal', async () => {
+ let signal;
+ const pending=deferred();
+ const {controller}=fixture((options,revision,requestSignal)=>{signal=requestSignal;return pending.promise;});
+ const run=controller.submit({mode:'search',text:'x',keys:true});
+ assert.ok(signal instanceof AbortSignal);
+ controller.clear();
+ assert.equal(signal.aborted,true);
+ pending.resolve({revision:1,matches:[],truncated:false});await run;
+ });

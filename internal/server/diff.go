@@ -74,7 +74,8 @@ func (s *browserSession) replaceDiffBaseline(w http.ResponseWriter, format, text
 	// document revision or history entry, and failed replacements retain the file.
 	s.comparison = base
 	s.comparisonFilename = filename
-	writeJSON(w, diffResponse{result, s.data.Revision, baselineMetadata("file", filename, base)})
+	s.comparisonMetadata = baselineMetadata("file", filename, base)
+	writeJSON(w, diffResponse{result, s.data.Revision, s.comparisonMetadata})
 }
 
 func (s *browserSession) replaceDiffBaselineFromPath(w http.ResponseWriter, path string, revision int) {
@@ -114,7 +115,13 @@ func (s *browserSession) diffBaseline(kind string) (*document.Document, diffBase
 	filename := s.filename
 	switch kind {
 	case "original":
-		base, err = s.data.Parse(s.data.OriginalFormat, s.data.Original)
+		base = s.originalDocument
+		if base == nil {
+			base, err = s.data.Parse(s.data.OriginalFormat, s.data.Original)
+			if err == nil {
+				s.originalDocument = base
+			}
+		}
 	case "file":
 		base = s.comparison
 		filename = s.comparisonFilename
@@ -127,7 +134,14 @@ func (s *browserSession) diffBaseline(kind string) (*document.Document, diffBase
 	if err != nil {
 		return nil, diffBaseline{}, err
 	}
-	return base, baselineMetadata(kind, filename, base), nil
+	metadata := s.originalMetadata
+	if kind == "file" {
+		metadata = s.comparisonMetadata
+	}
+	if metadata.Token == "" {
+		metadata = baselineMetadata(kind, filename, base)
+	}
+	return base, metadata, nil
 }
 func (s *browserSession) revertDiff(kind, token string, index, revision int) error {
 	if s.data.Doc == nil {

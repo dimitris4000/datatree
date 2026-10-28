@@ -1,3 +1,9 @@
+import { EditorState, ChangeSet, Compartment } from '@codemirror/state';
+import { EditorView, lineNumbers, highlightActiveLineGutter, drawSelection, keymap, placeholder } from '@codemirror/view';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { foldGutter, foldKeymap, syntaxHighlighting, defaultHighlightStyle, foldAll, unfoldAll } from '@codemirror/language';
+import { json } from '@codemirror/lang-json';
+import { yaml } from '@codemirror/lang-yaml';
 export const normalizedSource = text => text.replace(/\r\n?/g, '\n');
 export function lineStarts(text) {
   const starts = [0];
@@ -34,95 +40,83 @@ export function revealPath(ranges, id) {
   return path.reverse();
 }
 
-// Keep the native textarea's editing, selection, IME and accessibility behavior.
-// Only visible gutter lines are rendered, even for very large documents.
+// The CM rope and composed ChangeSet keep ordinary editing proportional to the
+// changed region. Serializing the whole document is reserved for explicit export/import.
 export class SourceEditor {
-  constructor(source, gutter, position, onSelection) {
-    Object.assign(this, { source, gutter, position, onSelection });
-    this.mirror = source.ownerDocument.createElement('div');
-    this.mirror.className = 'source-selection';
-    this.mirror.setAttribute('aria-hidden', 'true');
-    this.mirrorText = source.ownerDocument.createElement('pre');
-    this.mirrorText.className = 'source-selection-text';
-    this.mirror.append(this.mirrorText);
-    source.before(this.mirror);
-    this.text = null;
-    this.signature = '';
-    this.timer = null;
-    source.addEventListener('input', () => this.refresh());
-    source.addEventListener('scroll', () => this.renderGutter());
-    for (const type of ['select', 'keyup', 'pointerup'])
-      source.addEventListener(type, () => this.queueSelection());
-    source.ownerDocument.addEventListener('selectionchange', () => {
-      if (source.ownerDocument.activeElement === source) this.queueSelection();
-    });
-    this.observer = new ResizeObserver(() => this.renderGutter());
-    this.observer.observe(source);
-    this.refresh();
-  }
-  refresh() {
-    if (this.text !== this.source.value) {
-      this.text = this.source.value;
-      this.mirrorSignature = null;
-      this.starts = lineStarts(this.text);
+ constructor(host, gutter, position, onSelection = () => {}, onChange = () => {}) {
+  Object.assign(this,{host,position,onSelection,onChange});
+  this.readOnlyConfig = new Compartment();
+  this.languageConfig = new Compartment();
+  this.changes = ChangeSet.empty(0);
+  this.silent = false;
+  this.extensions = [placeholder(host.dataset.placeholder||''),lineNumbers(),highlightActiveLineGutter(),drawSelection(),history(),foldGutter(),
+   keymap.of([indentWithTab,...defaultKeymap,...historyKeymap,...foldKeymap]),
+   syntaxHighlighting(defaultHighlightStyle),
+   this.readOnlyConfig.of(EditorState.readOnly.of(false)),this.languageConfig.of([]),
+   EditorView.contentAttributes.of({'aria-label':host.getAttribute('aria-label') || 'Document source',spellcheck:'false'}),
+   EditorView.updateListener.of(update => {
+    if (update.docChanged && !this.silent) {
+     this.changes=this.changes.compose(update.changes);
+     this.onChange(this.dirty);
     }
-    this.renderGutter();
-  }
-  renderGutter() {
-    const source = this.source;
-    const lineHeight = parseFloat(getComputedStyle(source).lineHeight) || 18.7;
-    const padding = parseFloat(getComputedStyle(source).paddingTop) || 18;
-    const first = Math.max(0, Math.floor((source.scrollTop - padding) / lineHeight));
-    const last = Math.min(this.starts.length, first + Math.ceil(source.clientHeight / lineHeight) + 2);
-    const content = source.ownerDocument.createDocumentFragment();
-    const signature = `${source.selectionStart}:${source.selectionEnd}`;
-    if (signature !== this.mirrorSignature) {
-      this.mirrorSignature = signature;
-      const before = source.ownerDocument.createTextNode(this.text.slice(0, source.selectionStart));
-      const mark = source.ownerDocument.createElement('mark');
-      mark.textContent = this.text.slice(source.selectionStart, source.selectionEnd);
-      const after = source.ownerDocument.createTextNode(this.text.slice(source.selectionEnd) + '\n');
-      this.mirrorText.replaceChildren(before, mark, after);
+    if (update.docChanged || update.selectionSet) this.refresh();
+    if (update.selectionSet && !this.silent) {
+     clearTimeout(this.timer);
+     const range=update.state.selection.main;
+     this.timer=setTimeout(()=>this.onSelection(range.from,range.to),100);
     }
-    this.mirror.style.width = `${source.clientWidth}px`;
-    this.mirrorText.style.transform = `translate(${-source.scrollLeft}px, ${-source.scrollTop}px)`;
-    const start = lineIndex(this.starts, source.selectionStart);
-    const end = lineIndex(this.starts, Math.max(source.selectionStart, source.selectionEnd - 1));
-    for (let i = first; i < last; i++) {
-      const number = source.ownerDocument.createElement('div');
-      number.textContent = String(i + 1);
-      number.className = i >= start && i <= end ? 'source-line active' : 'source-line';
-      number.style.height = `${lineHeight}px`;
-      content.append(number);
-    }
-    this.gutter.replaceChildren(content);
-    this.gutter.style.paddingTop = `${Math.max(0, padding + first * lineHeight - source.scrollTop)}px`;
-    // A negative offset is needed when the top line is partly scrolled away.
-    this.gutter.style.transform = `translateY(${Math.min(0, padding + first * lineHeight - source.scrollTop)}px)`;
-    this.gutter.parentElement.style.setProperty('--gutter-width', `${(String(this.starts.length).length + 2) * 8}px`);
-    const caret = source.selectionDirection === 'backward' ? source.selectionStart : source.selectionEnd;
-    const line = lineIndex(this.starts, caret);
-    this.position.textContent = `Ln ${line + 1}, Col ${caret - this.starts[line] + 1}`;
-  }
-  queueSelection() {
-    this.renderGutter();
-    const signature = `${this.source.selectionStart}:${this.source.selectionEnd}`;
-    if (signature === this.signature) return;
-    this.signature = signature;
-    clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.onSelection(this.source.selectionStart, this.source.selectionEnd), 100);
-  }
-  highlight(range) {
-    if (!range) return;
-    clearTimeout(this.timer);
-    this.signature = `${range.start}:${range.end}`;
-    this.source.setSelectionRange(range.start, range.end);
-    const lineHeight = parseFloat(getComputedStyle(this.source).lineHeight) || 18.7;
-    const line = lineIndex(this.starts, range.start);
-    this.source.scrollTop = Math.max(0, line * lineHeight - this.source.clientHeight / 3);
-    const column = range.start - this.starts[line];
-    const charWidth = (parseFloat(getComputedStyle(this.source).fontSize) || 11) * 0.6;
-    this.source.scrollLeft = Math.max(0, column * charWidth - this.source.clientWidth / 3);
-    this.renderGutter();
-  }
+   }),
+   EditorView.theme({'&':{height:'100%',fontSize:'11px'},'.cm-scroller':{overflow:'auto',fontFamily:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'},'.cm-content':{padding:'18px 0'},'.cm-gutters':{backgroundColor:'#f2f5ee',color:'#748174'},'.cm-selectionBackground':{backgroundColor:'#bdd7bd !important'},'&.cm-focused .cm-selectionBackground':{backgroundColor:'#bdd7bd'}}),
+  ];
+  this.view = new EditorView({state:EditorState.create({extensions:this.extensions}),parent:host});
+  this.refresh();
+ }
+ get dirty() { return !this.changes.empty; }
+ getText() { return this.view.state.doc.toString(); }
+ patches() {
+  const patches=[];
+  this.changes.iterChanges((start,end,_from,_to,insert)=>patches.push({start,end,text:insert.toString()}));
+  return patches;
+ }
+ setText(text,format) {
+  clearTimeout(this.timer);
+  this.format=format;
+  this.changes=ChangeSet.empty(normalizedSource(text).length);
+  this.silent=true;
+  this.view.setState(EditorState.create({doc:text,extensions:this.extensions}));
+  this.setFormat(format);
+  this.silent=false;
+  this.refresh();
+ }
+ setFormat(format) {
+  this.format=format;
+  this.view.dispatch({effects:this.languageConfig.reconfigure(format==='json'?json():format==='yaml'?yaml():[])});
+ }
+ markClean() { this.changes=ChangeSet.empty(this.view.state.doc.length); }
+ snapshot() { return {state:this.view.state,changes:this.changes,format:this.format}; }
+ restore(snapshot) {
+  clearTimeout(this.timer);
+  this.silent=true;
+  this.view.setState(snapshot.state);
+  this.changes=snapshot.changes;
+  this.format=snapshot.format;
+  this.silent=false;
+  this.refresh();
+ }
+ set readOnly(value) { this.view.dispatch({effects:this.readOnlyConfig.reconfigure([EditorState.readOnly.of(value),EditorView.editable.of(!value)])}); }
+ refresh() {
+  const caret=this.view.state.selection.main.head,line=this.view.state.doc.lineAt(caret);
+  if (this.position) this.position.textContent=`Ln ${line.number}, Col ${caret-line.from+1}`;
+ }
+ highlight(range) {
+  if (!range) return;
+  clearTimeout(this.timer);
+  this.silent=true;
+  this.view.dispatch({selection:{anchor:range.start,head:range.end},effects:EditorView.scrollIntoView(range.start,{y:'center',x:'center'})});
+  this.silent=false;
+  this.refresh();
+ }
+ collapse() { foldAll(this.view); }
+ expand() { unfoldAll(this.view); }
+ destroy() { clearTimeout(this.timer);this.view.destroy(); }
 }

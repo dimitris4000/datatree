@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,15 @@ import (
 	"strings"
 	"time"
 )
+
+// Stat provides an allocation hint, never a read limit: the file may change
+// before Read. Keep one overflow byte so callers still reject oversized input.
+func readSizedInput(r io.Reader, size int64, limit int) ([]byte, error) {
+	capacity := min(max(size, 0), int64(limit)) + bytes.MinRead
+	buffer := bytes.NewBuffer(make([]byte, 0, int(capacity)))
+	_, err := buffer.ReadFrom(io.LimitReader(r, int64(limit)+1))
+	return buffer.Bytes(), err
+}
 
 func readLocalInput(path string, limit int) (string, []byte, error) {
 	if strings.TrimSpace(path) == "" {
@@ -35,7 +45,7 @@ func readLocalInput(path string, limit int) (string, []byte, error) {
 		return "", nil, err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
+	data, err := readSizedInput(file, info.Size(), limit)
 	if err != nil {
 		return "", nil, err
 	}
@@ -46,6 +56,9 @@ func readLocalInput(path string, limit int) (string, []byte, error) {
 }
 
 func (s *browserSession) openLocal(path string, revision int) error {
+	return s.openLocalContext(context.Background(), path, revision)
+}
+func (s *browserSession) openLocalContext(ctx context.Context, path string, revision int) error {
 	if revision != s.data.Revision {
 		return errors.New("stale revision; refresh the current document")
 	}
@@ -88,7 +101,7 @@ func (s *browserSession) openLocal(path string, revision int) error {
 		return err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
+	data, err := readSizedInput(file, info.Size(), limit)
 	if err != nil {
 		return err
 	}
@@ -99,9 +112,11 @@ func (s *browserSession) openLocal(path string, revision int) error {
 	if err != nil {
 		return err
 	}
-	if err = s.data.Import(format, data, revision); err != nil {
+	if err = s.data.ImportContext(ctx, format, data, revision); err != nil {
 		return fmt.Errorf("invalid %s document: %w", strings.ToUpper(format), err)
 	}
+	s.git = localGitInfo(path)
+	s.gitPath, s.gitLoaded = path, true
 	s.path = path
 	s.filename = filepath.Base(path)
 	s.schema = schema

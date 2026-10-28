@@ -2,6 +2,7 @@ package document
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -35,18 +36,39 @@ func clone(n *yaml.Node, table map[*yaml.Node]*yaml.Node) *yaml.Node {
 	c.Alias = clone(n.Alias, table)
 	return &c
 }
-func (d *Document) Edit(a Action) (*Document, error) {
+func (d *Document) Edit(a Action) (*Document, error) { return d.EditContext(context.Background(), a) }
+func (d *Document) EditContext(ctx context.Context, a Action) (*Document, error) {
+	if d.compact != nil {
+		if next, ok, err := d.compactEdit(ctx, a); ok || err != nil {
+			return next, err
+		}
+		legacy, err := d.materialize(ctx)
+		if err != nil {
+			return nil, err
+		}
+		next, err := legacy.EditContext(ctx, a)
+		return d.compactFallbackResult(ctx, next, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	parse := func(format string, b []byte) (*Document, error) {
+		return ParseWithLimitsContext(ctx, format, b, d.Limits())
+	}
 	target := d.Nodes[a.Node]
 	if target == nil {
 		return nil, errors.New("selected node no longer exists")
+	}
+	if d.Format == "csv" && a.Op == "replace" && target.Kind == "string" {
+		return d.replaceCSVCell(ctx, target, a)
 	}
 	if a.Op == "replace" && d.Format == "yaml" && a.Format == "yaml" {
 		current, _ := d.YAML(target.ID)
 		normalized := func(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
 		if normalized(a.Text) == normalized(current) {
-			return d.parse(d.Format, d.Source)
+			return parse(d.Format, d.Source)
 		}
-		incoming, err := d.yamlFragment(a.Text)
+		incoming, err := d.yamlFragmentContext(ctx, a.Text)
 		if err != nil {
 			return nil, fmt.Errorf("invalid YAML subtree: %w", err)
 		}
@@ -58,7 +80,42 @@ func (d *Document) Edit(a Action) (*Document, error) {
 			indent := target.key.Column + 1
 			replacement = "\n" + strings.Repeat(" ", indent) + indentFragment(strings.ReplaceAll(a.Text, "\r\n", "\n"), indent)
 		}
-		return d.patch(target, replacement, false)
+		return d.patchContext(ctx, target, replacement, false)
+	}
+	// JSON replacement needs only the fragment and one validated source patch.
+	// Avoid cloning and re-encoding the complete AST for an otherwise local edit.
+	if a.Op == "replace" && (d.Format == "json" || d.Format == "jsonl" && target.parent != nil) {
+		f := a.Format
+		if f == "" {
+			f = "json"
+		}
+		incoming, err := parse(f, []byte(a.Text))
+		if err != nil {
+			return nil, err
+		}
+		if incoming.Root.Kind == "stream" {
+			return nil, errors.New("subtree must contain one document")
+		}
+		replacement := []byte(a.Text)
+		if f != "json" || d.Format == "jsonl" {
+			replacement, err = jsonBytes(incoming.raw, false, d.Limits())
+			if err != nil {
+				return nil, err
+			}
+		}
+		if f == "json" {
+			if next, ok, err := d.tryScalarReplacement(ctx, target, replacement, incoming.raw); ok || err != nil {
+				return next, err
+			}
+		}
+		return d.patchContext(ctx, target, string(replacement), false)
+	}
+	if d.incremental {
+		canonical, err := parse(d.Format, d.Source)
+		if err != nil {
+			return nil, err
+		}
+		return canonical.EditContext(ctx, a)
 	}
 	table := map[*yaml.Node]*yaml.Node{}
 	root := clone(d.raw, table)
@@ -69,7 +126,7 @@ func (d *Document) Edit(a Action) (*Document, error) {
 		if f == "" {
 			f = "json"
 		}
-		incoming, err := d.parse(f, []byte(a.Text))
+		incoming, err := parse(f, []byte(a.Text))
 		if err != nil {
 			return nil, err
 		}
@@ -103,7 +160,7 @@ func (d *Document) Edit(a Action) (*Document, error) {
 		if f == "" {
 			f = "json"
 		}
-		v, err := d.parse(f, []byte(a.Text))
+		v, err := parse(f, []byte(a.Text))
 		if err != nil {
 			return nil, err
 		}
@@ -196,13 +253,13 @@ func (d *Document) Edit(a Action) (*Document, error) {
 			indent := target.key.Column + 1
 			replacement = "\n" + strings.Repeat(" ", indent) + indentFragment(string(b), indent)
 		}
-		return d.patch(patchTarget, replacement, true)
+		return d.patchContext(ctx, patchTarget, replacement, true)
 	}
 	b, err := encode(d.Format, root, d.headers, d.Limits())
 	if err != nil {
 		return nil, err
 	}
-	return d.parse(d.Format, b)
+	return parse(d.Format, b)
 }
 func sameLine(source []byte, start int, key *yaml.Node) bool {
 	if key == nil {
@@ -223,6 +280,12 @@ func indentFragment(text string, indent int) string {
 	return result
 }
 func (d *Document) patch(n *Node, replacement string, includeComment bool) (*Document, error) {
+	return d.patchContext(context.Background(), n, replacement, includeComment)
+}
+func (d *Document) patchContext(ctx context.Context, n *Node, replacement string, includeComment bool) (*Document, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	start, end := n.Start, n.End
 	if start > 0 && d.Source[start-1] == ':' && !strings.HasPrefix(replacement, "\n") {
 		replacement = " " + replacement
@@ -261,7 +324,7 @@ func (d *Document) patch(n *Node, replacement string, includeComment bool) (*Doc
 	b = append(b, d.Source[:start]...)
 	b = append(b, replacement...)
 	b = append(b, d.Source[end:]...)
-	next, err := d.parse(d.Format, b)
+	next, err := ParseWithLimitsContext(ctx, d.Format, b, d.Limits())
 	if err != nil {
 		return nil, fmt.Errorf("edit rejected; source unchanged: %w", err)
 	}
@@ -314,7 +377,10 @@ func renameAnchors(copied, root *yaml.Node) {
 
 // Validate standalone fragments, with harmless anchor stubs for references into the document.
 func (d *Document) yamlFragment(text string) (*yaml.Node, error) {
-	parsed, err := d.parse("yaml", []byte(text))
+	return d.yamlFragmentContext(context.Background(), text)
+}
+func (d *Document) yamlFragmentContext(ctx context.Context, text string) (*yaml.Node, error) {
+	parsed, err := ParseWithLimitsContext(ctx, "yaml", []byte(text), d.Limits())
 	if err == nil {
 		return parsed.raw, nil
 	}
@@ -332,7 +398,7 @@ func (d *Document) yamlFragment(text string) (*yaml.Node, error) {
 	}
 	prefix.WriteString("value:\n  ")
 	prefix.WriteString(indentFragment(strings.ReplaceAll(text, "\r\n", "\n"), 2))
-	wrapped, e := d.parse("yaml", []byte(prefix.String()))
+	wrapped, e := ParseWithLimitsContext(ctx, "yaml", []byte(prefix.String()), d.Limits())
 	if e != nil {
 		return nil, err
 	}

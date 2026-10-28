@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -56,6 +57,9 @@ func readCompanionSchema(path string, generation uint64) (*attachedSchema, error
 }
 
 func (s *browserSession) importUploaded(format, text, filename string, schema *schemaUpload, revision int) error {
+	return s.importUploadedContext(context.Background(), format, text, filename, schema, revision)
+}
+func (s *browserSession) importUploadedContext(ctx context.Context, format, text, filename string, schema *schemaUpload, revision int) error {
 	if revision != s.data.Revision {
 		return errors.New("stale revision; refresh the current document")
 	}
@@ -70,7 +74,7 @@ func (s *browserSession) importUploaded(format, text, filename string, schema *s
 		}
 		attachment = newAttachedSchema(compiled, []byte(schema.Text), schema.Filename, s.schemaGeneration+1)
 	}
-	if err := s.data.Import(format, []byte(text), revision); err != nil {
+	if err := s.data.ImportContext(ctx, format, []byte(text), revision); err != nil {
 		return err
 	}
 	s.path, s.filename = "", filename

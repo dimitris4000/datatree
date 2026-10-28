@@ -42,7 +42,7 @@ func TestLocalSchemaAndComparisonPickers(t *testing.T) {
 		t.Fatalf("comparison: %d %s %v", w.Code, w.Body.String(), err)
 	}
 	before := request(t, h, "GET", "/api/state", "", c).Body.String()
-	if !strings.Contains(before, `"source":"{\"a\":2}"`) || !strings.Contains(before, `"canUndo":false`) || !strings.Contains(before, attached.Schema.Token) {
+	if request(t, h, "GET", "/api/source?revision=1", "", c).Body.String() != `{"a":2}` || !strings.Contains(before, `"canUndo":false`) || !strings.Contains(before, attached.Schema.Token) {
 		t.Fatal("picker changed working state", before)
 	}
 	for _, endpoint := range []string{"/api/schema", "/api/diff-baseline"} {

@@ -3,13 +3,17 @@ package document
 
 import (
 	"bytes"
+	"context"
+	"datatree/internal/compact"
+	"datatree/internal/textstore"
 	"encoding/csv"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
@@ -18,6 +22,7 @@ import (
 const MaxBytes = 20 * 1024 * 1024
 const MaxNodes = 1000000
 const MaxDepth = 256
+const compactThreshold = 1024 * 1024
 
 type Node struct {
 	ID       string  `json:"id"`
@@ -33,15 +38,24 @@ type Node struct {
 	raw      *yaml.Node
 	parent   *Node
 	key      *yaml.Node
+	keyStart int
 }
 type Document struct {
-	Format  string
-	Source  []byte
-	Root    *Node
-	Nodes   map[string]*Node
-	raw     *yaml.Node
-	headers []string
-	limits  Limits
+	compact             *compact.Tree
+	compactComplexKeys  bool
+	compactYAMLMetadata bool
+	localCost           int
+	Format              string
+	Source              []byte
+	Root                *Node
+	Nodes               map[string]*Node
+	raw                 *yaml.Node
+	headers             []string
+	limits              Limits
+	sourceIndexOnce     sync.Once
+	sourceIndex         atomic.Pointer[sourceIndex]
+	incremental         bool
+	changedNodes        []string
 }
 
 func Parse(format string, source []byte) (*Document, error) {
@@ -49,6 +63,31 @@ func Parse(format string, source []byte) (*Document, error) {
 }
 
 func ParseWithLimits(format string, source []byte, limits Limits) (*Document, error) {
+	return ParseWithLimitsContext(context.Background(), format, source, limits)
+}
+
+// ParseWithLimitsContext checks cancellation during input reads and tree construction.
+func ParseWithLimitsContext(ctx context.Context, format string, source []byte, limits Limits) (*Document, error) {
+	return parseWithStorageContext(ctx, format, source, limits, len(source) > compactThreshold)
+}
+func parseWithStorageContext(ctx context.Context, format string, source []byte, limits Limits, compactMode bool) (*Document, error) {
+	d, err := parseDocumentContext(ctx, format, source, limits, compactMode)
+	if err != nil {
+		return nil, err
+	}
+	if compactMode && d.compact == nil {
+		return d.compactify(ctx)
+	}
+	return d, nil
+}
+func parseLegacyWithLimitsContext(ctx context.Context, format string, source []byte, limits Limits) (*Document, error) {
+	return parseDocumentContext(ctx, format, source, limits, false)
+}
+func parseDocumentContext(ctx context.Context, format string, source []byte, limits Limits, compactMode bool) (*Document, error) {
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	limits = limits.Normalized()
 	if err := limits.Validate(); err != nil {
 		return nil, err
@@ -63,17 +102,21 @@ func ParseWithLimits(format string, source []byte, limits Limits) (*Document, er
 	if format == "yml" {
 		format = "yaml"
 	}
+	// CSV span capture still requires its row graph. Other formats emit compact
+	// records directly while walking the validated parser tree.
+	compactMode = compactMode && format != "csv"
 	d := &Document{Format: format, Source: bytes.Clone(source), Nodes: map[string]*Node{}, limits: limits}
 	var root *yaml.Node
+	jsonSpans := map[*yaml.Node]byteSpan{}
 	switch format {
 	case "json":
 		var err error
-		root, err = parseJSON(source, limits)
+		root, err = parseJSON(ctx, source, limits, jsonSpans, 0)
 		if err != nil {
 			return nil, err
 		}
 	case "yaml":
-		dec := yaml.NewDecoder(bytes.NewReader(source))
+		dec := yaml.NewDecoder(contextReader{ctx, bytes.NewReader(source)})
 		var docs []*yaml.Node
 		for {
 			var n yaml.Node
@@ -97,11 +140,14 @@ func ParseWithLimits(format string, source []byte, limits Limits) (*Document, er
 		}
 	case "jsonl":
 		root = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Line: 1, Column: 1}
+		lineOffset := 0
 		for i, line := range bytes.Split(source, []byte("\n")) {
+			base := lineOffset
+			lineOffset += len(line) + 1
 			if len(bytes.TrimSpace(line)) == 0 {
 				continue
 			}
-			n, err := parseJSON(line, limits)
+			n, err := parseJSON(ctx, line, limits, jsonSpans, base)
 			if err != nil {
 				return nil, fmt.Errorf("line %d: %w", i+1, err)
 			}
@@ -109,7 +155,7 @@ func ParseWithLimits(format string, source []byte, limits Limits) (*Document, er
 			root.Content = append(root.Content, n)
 		}
 	case "csv":
-		r := csv.NewReader(bytes.NewReader(source))
+		r := csv.NewReader(contextReader{ctx, bytes.NewReader(source)})
 		headers, err := r.Read()
 		if err != nil {
 			return nil, fmt.Errorf("CSV header: %w", err)
@@ -140,15 +186,43 @@ func ParseWithLimits(format string, source []byte, limits Limits) (*Document, er
 	default:
 		return nil, errors.New("format must be json, jsonl, yaml or csv")
 	}
-	if err := validateRaw(root, limits); err != nil {
+	if err := validateRawContext(ctx, root, limits); err != nil {
 		return nil, err
 	}
 	d.raw = root
-	starts := lineStarts(source)
-	positions := columnOffsets(source, starts)
+	var starts []int
+	var positions map[int][]int
+	if format != "json" && format != "jsonl" {
+		starts = lineStarts(source)
+		positions = columnOffsets(source, starts)
+	}
 	count := 0
+	var inputs []compact.Input
+	var rawIDs map[*yaml.Node]uint32
+	complexKeys, hasYAMLMetadata := false, false
+	if compactMode {
+		var values func(*yaml.Node) int
+		values = func(n *yaml.Node) int {
+			total := 1
+			for i, c := range n.Content {
+				if n.Kind != yaml.MappingNode || i%2 == 1 {
+					total += values(c)
+				}
+			}
+			return total
+		}
+		inputs = make([]compact.Input, values(root))
+		if format == "yaml" {
+			rawIDs = make(map[*yaml.Node]uint32)
+		}
+	}
+	flowEnds := map[int]int{}
+	keyFingerprints := map[scalarKeyFingerprint]string{}
 	var build func(*yaml.Node, *Node, *yaml.Node, string, string, int) (*Node, error)
 	build = func(raw *yaml.Node, parent *Node, key *yaml.Node, label, path string, depth int) (*Node, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		count++
 		if count > limits.MaxNodes {
 			return nil, fmt.Errorf("document exceeds configured node limit (%d)", limits.MaxNodes)
@@ -156,39 +230,81 @@ func ParseWithLimits(format string, source []byte, limits Limits) (*Document, er
 		if depth > MaxDepth {
 			return nil, fmt.Errorf("document exceeds depth %d", MaxDepth)
 		}
-		n := &Node{ID: strconv.Itoa(count), Label: label, Path: path, raw: raw, parent: parent, key: key, Start: offset(source, starts, positions, raw.Line, raw.Column)}
-		n.End = scalarEnd(source, n.Start, raw)
+		n := &Node{ID: strconv.Itoa(count), Label: label, Path: path, raw: raw, parent: parent, key: key}
+		inputIndex := count - 1
+		if compactMode {
+			if rawIDs != nil && (raw.Anchor != "" || raw.Alias != nil) {
+				rawIDs[raw] = uint32(count)
+			}
+		}
+		var children []uint32
+		if span, ok := jsonSpans[raw]; ok {
+			n.Start, n.End = span.start, span.end
+		} else {
+			n.Start = offset(source, starts, positions, raw.Line, raw.Column)
+			if raw.Kind == yaml.MappingNode || raw.Kind == yaml.SequenceNode || raw.Kind == yaml.DocumentNode {
+				n.End = n.Start
+				if raw.Style&yaml.FlowStyle != 0 {
+					n.End = flowEndIndexed(source, n.Start, flowEnds)
+				}
+			} else {
+				n.End = scalarEnd(source, n.Start, raw)
+			}
+		}
+		if key != nil {
+			if span, ok := jsonSpans[key]; ok {
+				n.keyStart = span.start
+			} else {
+				n.keyStart = offset(source, starts, positions, key.Line, key.Column)
+			}
+		}
 		if raw.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0 {
 			n.End = blockEnd(source, skipProperties(source, n.Start), contextIndent(n))
 		}
 		if format == "yaml" && raw.Kind == yaml.ScalarNode && raw.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle|yaml.LiteralStyle|yaml.FoldedStyle) == 0 && !inFlow(parent) {
 			n.End = plainYAMLEnd(source, n.Start, key, parent)
 		}
-		n.Location = fmt.Sprintf("line %d, column %d", raw.Line, raw.Column)
+		if !compactMode {
+			n.Location = fmt.Sprintf("line %d, column %d", raw.Line, raw.Column)
+		}
 		switch raw.Kind {
 		case yaml.MappingNode:
 			n.Kind = "object"
-			keys := map[string]bool{}
+			var keys map[string]bool
+			if format != "json" && format != "jsonl" {
+				keys = map[string]bool{}
+			}
 			for i := 0; i < len(raw.Content); i += 2 {
 				k, v := raw.Content[i], raw.Content[i+1]
 				lab := k.Value
 				if k.Kind != yaml.ScalarNode {
 					lab = fmt.Sprintf("[complex key %d]", i/2)
 				}
-				fingerprint, _ := yaml.Marshal(k)
-				if keys[string(fingerprint)] {
-					return nil, fmt.Errorf("duplicate mapping key %q", lab)
+				if keys != nil {
+					fingerprint := mappingKeyFingerprint(k, keyFingerprints)
+					if keys[fingerprint] {
+						return nil, fmt.Errorf("duplicate mapping key %q", lab)
+					}
+					keys[fingerprint] = true
 				}
-				keys[string(fingerprint)] = true
+
 				p := ""
 				if path != "" && k.Kind == yaml.ScalarNode && k.Tag == "!!str" {
-					p = path + pathKey(lab)
+					p = "$"
+					if !compactMode {
+						p = path + pathKey(lab)
+					}
 				}
 				child, err := build(v, n, k, lab, p, depth+1)
 				if err != nil {
 					return nil, err
 				}
-				n.Children = append(n.Children, child)
+				if compactMode {
+					children = append(children, compactID(child.ID))
+					n.End = max(n.End, child.End)
+				} else {
+					n.Children = append(n.Children, child)
+				}
 			}
 		case yaml.SequenceNode, yaml.DocumentNode:
 			n.Kind = "array"
@@ -198,13 +314,21 @@ func ParseWithLimits(format string, source []byte, limits Limits) (*Document, er
 			for i, v := range raw.Content {
 				p := ""
 				if path != "" {
-					p = fmt.Sprintf("%s[%d]", path, i)
+					p = "$"
+					if !compactMode {
+						p = fmt.Sprintf("%s[%d]", path, i)
+					}
 				}
 				child, err := build(v, n, nil, fmt.Sprintf("[%d]", i), p, depth+1)
 				if err != nil {
 					return nil, err
 				}
-				n.Children = append(n.Children, child)
+				if compactMode {
+					children = append(children, compactID(child.ID))
+					n.End = max(n.End, child.End)
+				} else {
+					n.Children = append(n.Children, child)
+				}
 			}
 		case yaml.AliasNode:
 			n.Kind = "alias"
@@ -215,7 +339,11 @@ func ParseWithLimits(format string, source []byte, limits Limits) (*Document, er
 		}
 		if raw.Kind == yaml.MappingNode || raw.Kind == yaml.SequenceNode || raw.Kind == yaml.DocumentNode {
 			if raw.Style&yaml.FlowStyle != 0 || format == "json" || format == "jsonl" {
-				n.End = flowEnd(source, n.Start)
+				if span, ok := jsonSpans[raw]; ok {
+					n.End = span.end
+				} else {
+					n.End = flowEndIndexed(source, n.Start, flowEnds)
+				}
 			} else {
 				for _, c := range n.Children {
 					if c.End > n.End {
@@ -227,7 +355,30 @@ func ParseWithLimits(format string, source []byte, limits Limits) (*Document, er
 		if n.Start > n.End || n.End > len(source) {
 			return nil, errors.New("invalid source span")
 		}
-		d.Nodes[n.ID] = n
+		if compactMode {
+			in := compact.Input{ID: compactID(n.ID), Kind: n.Kind, Label: n.Label, Value: n.Value, Start: n.Start, End: n.End, KeyStart: -1, Pathable: path != "", Weight: 1 + rawWeight(key), OwnDepth: rawDepth(key), Children: children}
+			if parent != nil {
+				in.Parent = compactID(parent.ID)
+			}
+			if key != nil {
+				in.KeyStart = n.keyStart
+				if key.Kind != yaml.ScalarNode || key.Tag != "!!str" {
+					complexKeys = true
+					in.HasMetadata = true
+				}
+			}
+			if parent == nil && format == "jsonl" {
+				in.Start, in.End, in.KeyStart = 0, len(source), -1
+			}
+			if format == "yaml" {
+				in.HasMetadata = in.HasMetadata || yamlCompactMetadata(raw) || rawMetadata(key)
+				in.NativeIndent = max(0, fragmentIndent(n))
+				hasYAMLMetadata = hasYAMLMetadata || rawMetadata(raw) || rawMetadata(key)
+			}
+			inputs[inputIndex] = in
+		} else {
+			d.Nodes[n.ID] = n
+		}
 		return n, nil
 	}
 	path := "$"
@@ -239,14 +390,37 @@ func ParseWithLimits(format string, source []byte, limits Limits) (*Document, er
 	if err != nil {
 		return nil, err
 	}
-	index := map[*yaml.Node]string{}
-	for id, n := range d.Nodes {
-		index[n.raw] = id
-	}
-	for _, n := range d.Nodes {
-		if n.raw.Alias != nil {
-			n.Target = index[n.raw.Alias]
+	if compactMode {
+		for raw, id := range rawIDs {
+			if raw.Alias != nil {
+				inputs[id-1].Target = rawIDs[raw.Alias]
+			}
 		}
+		rootID := compactID(d.Root.ID)
+		// Compact construction allocates the retained chunks. Release parser
+		// references first so its raw graph can be collected during that work.
+		d.raw, d.Root, root = nil, nil, nil
+		jsonSpans, rawIDs = nil, nil
+		positions, flowEnds, keyFingerprints = nil, nil, nil
+		tree, err := compact.New(ctx, textstore.FromImmutable(d.Source), inputs, rootID, limits.MaxNodes, MaxDepth+1)
+		if err != nil {
+			return nil, err
+		}
+		next := compactDocument(format, d.Source, d.headers, limits, tree, complexKeys)
+		next.compactYAMLMetadata = hasYAMLMetadata
+		return next, nil
+	}
+	if format == "yaml" {
+		index := map[*yaml.Node]string{}
+		for id, n := range d.Nodes {
+			index[n.raw] = id
+		}
+		for _, n := range d.Nodes {
+			if n.raw.Alias != nil {
+				n.Target = index[n.raw.Alias]
+			}
+		}
+
 	}
 
 	return d, nil
@@ -271,111 +445,11 @@ func shiftLines(n *yaml.Node, delta int) {
 		shiftLines(c, delta)
 	}
 }
-func parseJSON(b []byte, limits Limits) (*yaml.Node, error) {
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.UseNumber()
-	budget := 0
-	var read func(int) (*yaml.Node, error)
-	read = func(depth int) (*yaml.Node, error) {
-		budget++
-		if budget > limits.MaxNodes {
-			return nil, fmt.Errorf("JSON exceeds parsed node limit (%d; object keys also count)", limits.MaxNodes)
-		}
-		if depth > MaxDepth {
-			return nil, errors.New("JSON depth exceeds 256")
-		}
-		t, err := dec.Token()
-		if err != nil {
-			return nil, err
-		}
-		switch v := t.(type) {
-		case json.Delim:
-			n := &yaml.Node{}
-			if v == '{' {
-				n.Kind = yaml.MappingNode
-				n.Tag = "!!map"
-				seen := map[string]bool{}
-				for dec.More() {
-					kt, err := dec.Token()
-					if err != nil {
-						return nil, err
-					}
-					budget++
-					if budget > limits.MaxNodes {
-						return nil, fmt.Errorf("JSON exceeds parsed node limit (%d; object keys also count)", limits.MaxNodes)
-					}
-					k, ok := kt.(string)
-					if !ok {
-						return nil, errors.New("invalid JSON key")
-					}
-					if seen[k] {
-						return nil, fmt.Errorf("duplicate JSON key %q", k)
-					}
-					seen[k] = true
-					value, err := read(depth + 1)
-					if err != nil {
-						return nil, err
-					}
-					n.Content = append(n.Content, strNode(k), value)
-				}
-			} else if v == '[' {
-				n.Kind = yaml.SequenceNode
-				n.Tag = "!!seq"
-				for dec.More() {
-					value, err := read(depth + 1)
-					if err != nil {
-						return nil, err
-					}
-					n.Content = append(n.Content, value)
-				}
-			} else {
-				return nil, errors.New("unexpected JSON delimiter")
-			}
-			_, err = dec.Token()
-			return n, err
-		case string:
-			return strNode(v), nil
-		case json.Number:
-			tag := "!!int"
-			if strings.ContainsAny(string(v), ".eE") {
-				tag = "!!float"
-			}
-			return &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: string(v)}, nil
-		case bool:
-			return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: strconv.FormatBool(v)}, nil
-		case nil:
-			return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Value: "null"}, nil
-		}
-		return nil, errors.New("invalid JSON value")
-	}
-	root, err := read(0)
-	if err != nil {
-		return nil, err
-	}
-	if _, err = dec.Token(); err != io.EOF {
-		return nil, errors.New("trailing content after JSON")
-	}
-	// The JSON decoder establishes JSON semantics; YAML supplies locations only.
-	var located yaml.Node
-	if err = yaml.Unmarshal(b, &located); err != nil {
-		return nil, err
-	}
-	var locate func(*yaml.Node, *yaml.Node)
-	locate = func(n, l *yaml.Node) {
-		n.Line = l.Line
-		n.Column = l.Column
-		n.Style = l.Style
-		for i := range n.Content {
-			if i < len(l.Content) {
-				locate(n.Content[i], l.Content[i])
-			}
-		}
-	}
-	if len(located.Content) > 0 {
-		locate(root, located.Content[0])
-	}
-	return root, nil
-}
+
+type byteSpan struct{ start, end int }
+
+// parseJSON captures token spans during decoding. JSON never passes through YAML's
+// parser: doing so duplicates work and imposes YAML semantics on JSON strings.
 func lineStarts(b []byte) []int {
 	r := []int{0}
 	for i, c := range b {
@@ -431,9 +505,15 @@ func offset(b []byte, lines []int, columns map[int][]int, line, col int) int {
 }
 
 func validateRaw(root *yaml.Node, limits Limits) error {
+	return validateRawContext(context.Background(), root, limits)
+}
+func validateRawContext(ctx context.Context, root *yaml.Node, limits Limits) error {
 	count := 0
 	var visit func(*yaml.Node, int) error
 	visit = func(n *yaml.Node, depth int) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		count++
 		if count > limits.MaxNodes {
 			return fmt.Errorf("document exceeds parsed node limit (%d; mapping keys also count)", limits.MaxNodes)
@@ -488,4 +568,46 @@ func pathKey(key string) string {
 	}
 	b.WriteString("']")
 	return b.String()
+}
+
+// contextReader bounds the interval between cancellation checks even when a
+// decoder requests an entire large input buffer in one read.
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	if len(p) > 32*1024 {
+		p = p[:32*1024]
+	}
+	return r.reader.Read(p)
+}
+
+// Repeated scalar keys (CSV headers and structured YAML rows) share exactly the
+// same yaml.Marshal fingerprint. Include every serialized scalar property;
+// complex keys retain the original marshal path and duplicate-key semantics.
+type scalarKeyFingerprint struct {
+	tag, value, anchor, head, line, foot string
+	style                                yaml.Style
+}
+
+func mappingKeyFingerprint(k *yaml.Node, cache map[scalarKeyFingerprint]string) string {
+	if k.Kind != yaml.ScalarNode {
+		b, _ := yaml.Marshal(k)
+		return string(b)
+	}
+	key := scalarKeyFingerprint{k.Tag, k.Value, k.Anchor, k.HeadComment, k.LineComment, k.FootComment, k.Style}
+	if value, ok := cache[key]; ok {
+		return value
+	}
+	b, _ := yaml.Marshal(k)
+	value := string(b)
+	if len(cache) < 4096 {
+		cache[key] = value
+	}
+	return value
 }

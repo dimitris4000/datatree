@@ -45,7 +45,7 @@ func TestStartupFileLoadsSnapshotIntoIndependentSessions(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil {
 				t.Fatal(err)
 			}
-			if state.Source != fixture.source || state.Format != fixture.format || state.Filename != "input."+fixture.extension || state.Revision != 1 || state.CanUndo {
+			if request(t, h, "GET", "/api/source?revision=1", "", second).Body.String() != fixture.source || state.Format != fixture.format || state.Filename != "input."+fixture.extension || state.Revision != 1 || state.CanUndo {
 				t.Fatalf("%+v", state)
 			}
 			if got := request(t, h, "GET", "/api/original", "", second).Body.String(); got != fixture.source {

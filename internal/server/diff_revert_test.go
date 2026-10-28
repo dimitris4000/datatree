@@ -46,7 +46,7 @@ func TestDiffRevertAPI(t *testing.T) {
 	w = request(t, h, "POST", "/api/history", `{"revision":3,"direction":"undo"}`, cookie)
 	var undoState struct{ Source string }
 	json.Unmarshal(w.Body.Bytes(), &undoState)
-	if w.Code != 200 || undoState.Source != `{"x":2}` {
+	if w.Code != 200 || request(t, h, "GET", "/api/source?revision=4", "", cookie).Body.String() != `{"x":2}` {
 		t.Fatal("revert not undoable", w.Code, w.Body.String())
 	}
 }

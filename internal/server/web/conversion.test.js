@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mountConversionDialog } from './conversion.js';
 
-function fixture({local=true, convert}={}) {
+function fixture({local=true, convert, getSource}={}) {
  const elements = new Map();
  for (const id of ['conversion','conversion-form','conversion-preview','conversion-save','conversion-filename','conversion-save-fields','conversion-save-label','conversion-save-help','conversion-error','confirm-convert','cancel-convert','close-convert']) {
   elements.set(id, {value:'',checked:false,disabled:false,hidden:false,open:false,listeners:new Map(),addEventListener(event,fn){this.listeners.set(event,fn);},showModal(){this.open=true;},close(){this.open=false;}});
  }
  const $=id=>elements.get(id), calls=[], downloads=[], installed=[];
  let revision=1;
- const panel=mountConversionDialog({getElementById:$},{revision:()=>revision,preview:async format=>({revision,format,text:'name: Alice\n',suggestedFilename:'my data.yaml',canSaveLocal:local,saveDirectory:local?'/data':''}),convert:async payload=>{calls.push(payload);if(convert)return convert(payload);return {revision:2,source:'name: Alice\n',savedPath:payload.saveFilename?'/data/'+payload.saveFilename:undefined};},install:async state=>installed.push(state),download:(text,name)=>downloads.push({text,name}),busy(){},status(){}});
+ const panel=mountConversionDialog({getElementById:$},{revision:()=>revision,preview:async format=>({revision,format,text:'name: Alice\n',suggestedFilename:'my data.yaml',canSaveLocal:local,saveDirectory:local?'/data':''}),convert:async payload=>{calls.push(payload);if(convert)return convert(payload);return {revision:2,source:'name: Alice\n',savedPath:payload.saveFilename?'/data/'+payload.saveFilename:undefined};},install:async state=>installed.push(state),getSource,download:(text,name)=>downloads.push({text,name}),busy(){},status(){}});
  return {$,panel,calls,downloads,installed,change(){revision++;},submit:()=> $('conversion-form').listeners.get('submit')({preventDefault(){}})};
 }
 
@@ -39,4 +39,11 @@ test('stale previews, invalid names and cancelled dialogs never convert',async()
 });
 test('conversion submissions are serialized while saving',async()=>{
  let finish;const pending=new Promise(resolve=>finish=resolve);const f=fixture({convert:()=>pending});await f.panel.open('yaml');const first=f.submit();await f.submit();assert.equal(f.calls.length,1);assert.equal(f.$('confirm-convert').disabled,true);finish({revision:2,source:'name: Alice\n'});await first;assert.equal(f.$('confirm-convert').disabled,false);
+});
+
+test('metadata-only conversion downloads explicit revision source rather than its bounded preview',async()=>{
+ const reads=[];
+ const f=fixture({local:false,convert:async()=>({revision:2}),getSource:async revision=>{reads.push(revision);return 'complete document';}});
+ await f.panel.open('yaml');f.$('conversion-save').checked=true;await f.submit();
+ assert.deepEqual(reads,[2]);assert.deepEqual(f.downloads,[{text:'complete document',name:'my data.yaml'}]);
 });

@@ -2,6 +2,7 @@ package document
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,13 @@ import (
 )
 
 func (d *Document) JSON(id string, allowLoss bool) (string, error) {
+	if d.compact != nil {
+		legacy, err := d.materialize(context.Background())
+		if err != nil {
+			return "", err
+		}
+		return legacy.JSON(id, allowLoss)
+	}
 	n := d.Nodes[id]
 	if n == nil {
 		return "", errors.New("node not found")
@@ -31,11 +39,28 @@ func (d *Document) JSON(id string, allowLoss bool) (string, error) {
 func jsonBytes(n *yaml.Node, allowLoss bool, options ...Limits) ([]byte, error) {
 	limits := limitOption(options)
 	var out bytes.Buffer
+	if err := jsonWrite(context.Background(), n, allowLoss, limits, &out); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+type jsonSink interface {
+	Write([]byte) (int, error)
+	WriteByte(byte) error
+	WriteString(string) (int, error)
+	Len() int
+}
+
+func jsonWrite(ctx context.Context, n *yaml.Node, allowLoss bool, limits Limits, out jsonSink) error {
 	visiting := map[*yaml.Node]bool{}
 	count := 0
 	merges := newMergeResolver(limits)
 	var write func(*yaml.Node, int) error
 	write = func(n *yaml.Node, depth int) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		count++
 		if count > limits.MaxNodes || depth > MaxDepth || out.Len() > limits.MaxBytes {
 			return errors.New("conversion exceeds document limits")
@@ -148,12 +173,12 @@ func jsonBytes(n *yaml.Node, allowLoss bool, options ...Limits) ([]byte, error) 
 		return nil
 	}
 	if err := write(n, 0); err != nil {
-		return nil, err
+		return err
 	}
 	if out.Len() > limits.MaxBytes {
-		return nil, fmt.Errorf("conversion exceeds configured size limit (%d bytes)", limits.MaxBytes)
+		return fmt.Errorf("conversion exceeds configured size limit (%d bytes)", limits.MaxBytes)
 	}
-	return out.Bytes(), nil
+	return nil
 }
 
 type mergeResolver struct {
@@ -232,6 +257,10 @@ func (r *mergeResolver) entries(n *yaml.Node) ([][2]*yaml.Node, error) {
 }
 
 func (d *Document) YAML(id string) (string, error) {
+	if d.compact != nil {
+		text, _, err := d.RepresentationContext(context.Background(), id, "yaml", 0)
+		return text, err
+	}
 	n := d.Nodes[id]
 	if n == nil {
 		return "", errors.New("node not found")
@@ -262,6 +291,13 @@ func marshalBlockYAML(n *yaml.Node) ([]byte, error) {
 
 // conversionBytes leaves ordinary YAML serialization and edits style-preserving.
 func (d *Document) conversionBytes(format string) ([]byte, error) {
+	if d.compact != nil {
+		legacy, err := d.materialize(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		return legacy.conversionBytes(format)
+	}
 	if format == "yaml" && d.Format != "yaml" {
 		return marshalBlockYAML(d.raw)
 	}

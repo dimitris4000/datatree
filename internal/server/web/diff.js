@@ -1,6 +1,7 @@
 export class DiffController {
   constructor({ revision, load, upload, navigate, render, revert = async () => false, invalidate = () => {} }) {
     Object.assign(this, { revision, load, upload, navigate, render, revert, invalidate });
+    this.cache = new Map();
     this.visible = false;
     this.baseline = 'original';
     this.file = null;
@@ -18,15 +19,16 @@ export class DiffController {
     this.index = -1;
     this.error = '';
     this.loading = this.navigating = false;
+    for(const [key,result] of this.cache)if(imported||result.revision!==this.revision())this.cache.delete(key);
     if (imported) { this.baseline = 'original'; this.file = null; }
     this.render(this);
   }
   async setVisible(value) {
     this.visible = value;
     if (!value) this.invalidateDocument();
-    else await this.refresh();
+    else await this.refresh(this.baseline, false);
   }
-  async refresh(kind = this.baseline) {
+  async refresh(kind = this.baseline, force = true) {
     if (!this.visible) return;
     if (kind === 'file' && !this.file) {
       this.error = 'Choose a comparison file first.';
@@ -40,10 +42,12 @@ export class DiffController {
     this.error = '';
     this.render(this);
     try {
-      const result = await this.load(kind, revision);
+      const key=`${revision}:${kind}:${kind==='file'?this.file?.token:''}`;
+      const result = !force&&this.cache.has(key)?this.cache.get(key):await this.load(kind, revision);
       if (generation !== this.generation) return;
       if (this.revision() !== revision || result.revision !== revision)
         throw new Error('Document changed; refresh Changes.');
+      this.cache.set(key,result);
       this.result = result;
       this.baseline = kind;
       if (kind === 'file') this.file = result.baseline;
@@ -74,6 +78,8 @@ export class DiffController {
       // A completed upload may retain its file while closed, but never restores
       // hidden tree highlights. Invalidate reads sent while it was pending.
       this.generation++;
+      for(const key of this.cache.keys())if(key.includes(':file:'))this.cache.delete(key);
+      this.cache.set(`${revision}:file:${result.baseline.token}`,result);
       this.file = result.baseline;
       this.baseline = 'file';
       this.result = this.visible ? result : null;

@@ -43,7 +43,7 @@ func TestImportEditHistoryAndIsolation(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil {
 		t.Fatal(err)
 	}
-	if state.Revision != 1 || state.Source != "{\"x\":1}" {
+	if state.Revision != 1 || request(t, h, "GET", "/api/source?revision=1", "", cookie).Body.String() != "{\"x\":1}" {
 		t.Fatalf("%+v", state)
 	}
 	w = request(t, h, "POST", "/api/edit", `{"op":"replace","node":"2","text":"2","format":"json","revision":1}`, cookie)
@@ -188,9 +188,10 @@ func TestJSONToYAMLConversionWorkflow(t *testing.T) {
 	if w.Body.String() != source {
 		t.Fatal("preview changed working source")
 	}
-	w = request(t, h, "GET", "/inspector?node=1&revision=1", "", cookie)
-	if !strings.Contains(w.Body.String(), `<pre data-fold-format="yaml" id="yaml-preview">`+want+`</pre>`) {
-		t.Fatal("inspector differs from preview")
+	w = request(t, h, "GET", "/api/representation?revision=1&node=1&format=yaml&full=true", "", cookie)
+	var representation struct{ Text string }
+	if err := json.Unmarshal(w.Body.Bytes(), &representation); err != nil || representation.Text != want {
+		t.Fatal("representation differs from preview", w.Body.String())
 	}
 	w = request(t, h, "POST", "/api/convert", `{"format":"yaml","revision":1}`, cookie)
 	if w.Code == 200 {

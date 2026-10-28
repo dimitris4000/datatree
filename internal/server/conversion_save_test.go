@@ -69,7 +69,7 @@ func TestConversionSaveBesideLocalFile(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(written) != preview.Text || state.Source != preview.Text {
+			if string(written) != preview.Text || request(t, h, "GET", "/api/source?revision=2", "", cookie).Body.String() != preview.Text {
 				t.Fatalf("saved content differs from preview: %q", written)
 			}
 			original, err := os.ReadFile(path)
@@ -92,7 +92,7 @@ func TestConversionSaveBesideLocalFile(t *testing.T) {
 			if err := json.Unmarshal(get.Body.Bytes(), &state); err != nil {
 				t.Fatal(err)
 			}
-			if state.Revision != 3 || state.Format == source.target || state.Source != source.text {
+			if state.Revision != 3 || state.Format == source.target || request(t, h, "GET", "/api/source?revision=3", "", cookie).Body.String() != source.text {
 				t.Fatalf("failed save changed document: %+v", state)
 			}
 		})

@@ -1,4 +1,4 @@
-export function mountConversionDialog(document, { revision, preview, convert, install, download, busy, status, ready = () => true }) {
+export function mountConversionDialog(document, { revision, preview, convert, install, download, getSource, busy, status, cancelOperation, ready = () => true }) {
   const $ = id => document.getElementById(id);
   const dialog = $('conversion'), save = $('conversion-save'), filename = $('conversion-filename');
   let current = null, saving = false;
@@ -7,7 +7,8 @@ export function mountConversionDialog(document, { revision, preview, convert, in
     save.disabled = saving;
     filename.disabled = saving || !save.checked;
     $('confirm-convert').disabled = saving;
-    $('cancel-convert').disabled = saving;
+    $('cancel-convert').disabled = saving&&!cancelOperation;
+    $('cancel-convert').textContent=saving?'Cancel operation':'Cancel';
     $('close-convert').disabled = saving;
     $('confirm-convert').textContent = save.checked
       ? (current?.canSaveLocal ? 'Convert and save' : 'Convert and download') : 'Confirm conversion';
@@ -17,7 +18,7 @@ export function mountConversionDialog(document, { revision, preview, convert, in
     $('conversion-error').hidden = !message;
   }
   function cancel() {
-    if (saving) return;
+    if (saving) {cancelOperation?.();return;}
     current = null;
     dialog.close();
   }
@@ -25,7 +26,7 @@ export function mountConversionDialog(document, { revision, preview, convert, in
   $('cancel-convert').addEventListener('click', cancel);
   $('close-convert').addEventListener('click', cancel);
   dialog.addEventListener('cancel', event => {
-    if (saving) event.preventDefault();
+    if (saving) {event.preventDefault();cancelOperation?.();}
     else current = null;
   });
   $('conversion-form').addEventListener('submit', async event => {
@@ -53,7 +54,7 @@ export function mountConversionDialog(document, { revision, preview, convert, in
       converted = true;
       current = null;
       await install(next);
-      if (shouldSave && !snapshot.canSaveLocal) download(next.source, name);
+      if (shouldSave && !snapshot.canSaveLocal) download(getSource?await getSource(next.revision):next.source, name);
       dialog.close();
       status(next.savedPath ? `Saved converted copy: ${next.savedPath}`
         : shouldSave ? 'Converted copy downloaded.' : 'Conversion applied.');
@@ -75,7 +76,7 @@ export function mountConversionDialog(document, { revision, preview, convert, in
       const result = await preview(format);
       if (result.revision !== revision()) throw new Error('Document changed; preview the conversion again.');
       current = result;
-      $('conversion-preview').textContent = result.text;
+      $('conversion-preview').textContent = (result.truncated?`Preview only · ${result.totalBytes.toLocaleString()} bytes total. Conversion uses the complete document.\n\n`:'')+result.text;
       save.checked = false;
       filename.value = result.suggestedFilename;
       $('conversion-save-label').textContent = result.canSaveLocal ? 'Save beside the original file' : 'Download converted copy';

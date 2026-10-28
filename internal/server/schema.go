@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -10,7 +9,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"datatree/internal/document"
 )
@@ -68,13 +66,15 @@ func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	session := s.session(w, r)
+	s.mu.Unlock()
+	session.mu.Lock()
 	if session.data.Doc == nil {
-		s.mu.Unlock()
+		session.mu.Unlock()
 		fail(w, errors.New("open a file first"))
 		return
 	}
 	if *in.Revision != session.data.Revision {
-		s.mu.Unlock()
+		session.mu.Unlock()
 		fail(w, errors.New("stale revision; refresh Validation"))
 		return
 	}
@@ -82,37 +82,35 @@ func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) {
 		session.schema = nil
 		session.schemaGeneration++
 		writeJSON(w, map[string]any{"revision": session.data.Revision, "schema": nil})
-		s.mu.Unlock()
+		session.mu.Unlock()
 		return
 	}
 	if session.data.Doc.Format != "json" && session.data.Doc.Format != "yaml" && session.data.Doc.Format != "csv" && session.data.Doc.Format != "jsonl" {
-		s.mu.Unlock()
+		session.mu.Unlock()
 		fail(w, errors.New("schema validation supports JSON, JSONL, YAML and CSV"))
 		return
 	}
 	attachment := session.schema
 	if r.URL.Path == "/api/validate" {
 		if attachment == nil {
-			s.mu.Unlock()
+			session.mu.Unlock()
 			fail(w, errors.New("attach a schema first"))
 			return
 		}
 		if in.SchemaToken == "" {
-			s.mu.Unlock()
+			session.mu.Unlock()
 			fail(w, errors.New("validation requires a schema token"))
 			return
 		}
 		if in.SchemaToken != attachment.metadata.Token {
-			s.mu.Unlock()
+			session.mu.Unlock()
 			fail(w, errors.New("stale revision or schema; refresh Validation"))
 			return
 		}
 	}
 	generation := session.schemaGeneration
-	source := bytes.Clone(session.data.Doc.Source)
-	format := session.data.Doc.Format
-	limits := session.data.Doc.Limits()
-	s.mu.Unlock()
+	snapshot := session.data.Doc
+	session.mu.Unlock()
 
 	var result document.ValidationResult
 	var compiled *document.CompiledSchema
@@ -137,11 +135,7 @@ func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) {
 			err = fmt.Errorf("load schema %q: %w", in.Path, err)
 		}
 	} else {
-		var snapshot *document.Document
-		snapshot, err = document.ParseWithLimits(format, source, limits)
-		if err == nil {
-			result, err = document.ValidateSchema(snapshot, attachment.compiled)
-		}
+		result, err = document.ValidateSchema(snapshot, attachment.compiled)
 	}
 	if err != nil {
 		fail(w, err)
@@ -151,7 +145,6 @@ func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	live := false
 	for _, candidate := range s.sessions {
 		if candidate == session {
@@ -159,7 +152,10 @@ func (s *Server) schemaRequest(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	if !live || time.Since(session.touched) > 30*time.Minute || session.data.Revision != *in.Revision || session.schemaGeneration != generation {
+	s.mu.Unlock()
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if !live || session.data.Revision != *in.Revision || session.schemaGeneration != generation {
 		fail(w, errors.New("stale revision or schema; refresh Validation"))
 		return
 	}

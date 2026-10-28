@@ -37,6 +37,7 @@ type browserSession struct {
 	data               *document.Session
 	filename           string
 	path               string
+	savedHash          [32]byte
 	comparison         *document.Document
 	comparisonFilename string
 	schema             *attachedSchema
@@ -305,6 +306,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var live *browserSession
 	baseRevision, baseGeneration := d.Revision, session.schemaGeneration
 	baseComparison := session.comparison
+	basePath, baseSavedHash := session.path, session.savedHash
 	switch r.URL.Path {
 	case "/api/apply", "/api/patch", "/api/edit", "/actions/edit", "/api/history", "/api/import", "/api/open", "/api/diff-revert", "/api/preview":
 		live = session
@@ -323,6 +325,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var err error
 	var savedPath string
 	switch r.URL.Path {
+	case "/api/save", "/api/save-as":
+		savedPath, err = session.saveLocal(in.Path, r.URL.Path == "/api/save-as", in.Revision)
 	case "/api/import":
 		err = session.importUploadedContext(r.Context(), in.Format, in.Text, in.Filename, in.Schema, in.Revision)
 	case "/api/open":
@@ -383,7 +387,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		live.mu.Lock()
 		if r.Context().Err() != nil {
 			err = r.Context().Err()
-		} else if live.data.Revision != baseRevision || live.schemaGeneration != baseGeneration || live.comparison != baseComparison {
+		} else if live.data.Revision != baseRevision || live.schemaGeneration != baseGeneration || live.comparison != baseComparison || live.path != basePath || live.savedHash != baseSavedHash {
 			err = errors.New("stale revision; document changed during operation")
 		} else {
 			if job, ok := r.Context().Value(operationJobKey{}).(*operationJob); ok {
@@ -392,6 +396,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			live.data = session.data
 			live.filename = session.filename
 			live.path = session.path
+			live.savedHash = session.savedHash
 			live.comparison = session.comparison
 			live.comparisonFilename = session.comparisonFilename
 			live.schema = session.schema
@@ -474,6 +479,7 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) *browserSession
 		// session owns its revision, original bytes and history independently.
 		v.data = &document.Session{Doc: initial.data.Doc, Original: initial.data.Original, OriginalFormat: initial.data.OriginalFormat, Revision: 1, Limits: s.limits}
 		v.path, v.filename = initial.path, initial.filename
+		v.savedHash = initial.savedHash
 		v.git, v.gitPath, v.gitLoaded = initial.git, initial.gitPath, initial.gitLoaded
 		v.originalDocument = initial.data.Doc
 		v.originalMetadata = initial.originalMetadata
@@ -494,6 +500,8 @@ func stateValue(session *browserSession, savedPath string) map[string]any {
 	d := session.data
 	v := map[string]any{"revision": d.Revision, "canUndo": d.CanUndo(), "canRedo": d.CanRedo()}
 	v["limits"] = d.Limits.Normalized()
+	v["savePath"] = session.path
+	v["canSaveLocal"] = d.Doc != nil && session.path != "" && saveFormatMatches(session.path, d.Doc.Format)
 	if savedPath != "" {
 		v["savedPath"] = savedPath
 	}

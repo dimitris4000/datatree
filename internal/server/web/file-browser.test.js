@@ -50,3 +50,17 @@ test('opening is serialized and rejected draft guards never open files',async()=
  let finish;const f=fixture({open:()=>new Promise(resolve=>finish=resolve)});await f.picker.show();f.$('local-path').value='/data/test.json';const first=f.submit();await f.submit();assert.equal(f.opened.length,1);finish(true);await first;
  const guarded=fixture({ready:()=>false});await guarded.picker.show();guarded.$('local-path').value='/data/test.json';await guarded.submit();assert.equal(guarded.opened.length,0);
 });
+
+test('Save As retains a new path typed before directory loading finishes',async()=>{
+ let finish;
+ const f=fixture({browse:()=>new Promise(resolve=>{finish=resolve;})});
+ const selection=f.picker.pick('save');
+ f.$('local-path').value='/data/new.json';
+ finish(f.listing);
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(f.$('local-path').value,'/data/new.json');
+ assert.equal(f.$('file-browser-open').textContent,'Save');
+ await f.submit();
+ assert.deepEqual(await selection,{path:'/data/new.json'});
+ assert.equal(f.opened.length,0);
+});

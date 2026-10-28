@@ -35,6 +35,8 @@ export function mountFileBrowser(document, { revision, browse, open, ready, canP
   }
   async function load(value) {
     const token = ++generation, requestedRevision = revision();
+    path.value = '';
+    selected = null;
     $('file-browser-status').textContent = 'Loading directory…';
     try {
       const result = await browse({ revision: requestedRevision, path: value, showHidden: $('file-browser-hidden').checked });
@@ -47,8 +49,6 @@ export function mountFileBrowser(document, { revision, browse, open, ready, canP
       parent = result.parent;
       directory.value = current;
       $('file-browser-up').disabled = parent === current;
-      path.value = '';
-      selected = null;
       list.replaceChildren();
       const entries = result.entries.filter(entry => entry.directory || purpose !== 'schema' || /\.json$/i.test(entry.name));
       for (const entry of entries) {
@@ -88,13 +88,13 @@ export function mountFileBrowser(document, { revision, browse, open, ready, canP
       purpose = kind;
       if (kind === 'document' && pending) { pending(null); pending = null; }
       displayedRevision = revision();
-      $('open-document-title').textContent = kind === 'schema' ? 'Choose validation schema' : kind === 'comparison' ? 'Choose comparison file' : 'Open file';
-      $('file-browser-open').textContent = kind === 'document' ? 'Open' : 'Choose';
-      $('file-browser-help').textContent = kind === 'document'
+      $('open-document-title').textContent = kind === 'save' ? 'Save As…' : kind === 'schema' ? 'Choose validation schema' : kind === 'comparison' ? 'Choose comparison file' : 'Open file';
+      $('file-browser-open').textContent = kind === 'save' ? 'Save' : kind === 'document' ? 'Open' : 'Choose';
+      $('file-browser-help').textContent = kind === 'save' ? 'Browse to a folder, then enter a new file path below. Existing files will not be overwritten.' : kind === 'document'
         ? 'Browse files on the computer running Data Tree. Matching schemas and Git context load automatically.'
         : kind === 'schema' ? 'Choose a JSON Schema on the computer running Data Tree. The working document stays open.'
         : 'Choose a comparison file on the computer running Data Tree. The working document stays open.';
-      $('local-path-help').textContent = kind === 'schema' ? 'JSON Schema, up to 1 MiB. Relative paths start from the CLI’s working directory.'
+      $('local-path-help').textContent = kind === 'save' ? 'Enter a new path with the working document’s format extension. Relative paths start from the CLI’s working directory.' : kind === 'schema' ? 'JSON Schema, up to 1 MiB. Relative paths start from the CLI’s working directory.'
         : 'JSON, JSONL, YAML and CSV. Relative file paths start from the CLI’s working directory.';
       error();
       path.value = '';

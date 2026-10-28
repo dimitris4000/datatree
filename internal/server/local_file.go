@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -118,6 +119,7 @@ func (s *browserSession) openLocalContext(ctx context.Context, path string, revi
 	s.git = localGitInfo(path)
 	s.gitPath, s.gitLoaded = path, true
 	s.path = path
+	s.savedHash = sha256.Sum256(data)
 	s.filename = filepath.Base(path)
 	s.schema = schema
 	s.schemaGeneration++

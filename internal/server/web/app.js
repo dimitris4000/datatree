@@ -77,6 +77,7 @@ function setBusy(value) {
   if (!value) {
     $("undo").disabled = !state.canUndo;
     $("redo").disabled = !state.canRedo;
+    $("save").disabled = $("save-as").disabled = !state.root;
     $("apply").disabled = showOriginal;
     $("discard").disabled = showOriginal;
     $("source-diff-tab").disabled = !state.root;
@@ -138,6 +139,7 @@ function updateControls() {
     : "Ready when you are.";
   $("undo").disabled = busy || !state.canUndo;
   $("redo").disabled = busy || !state.canRedo;
+  $("save").disabled = $("save-as").disabled = busy || !state.root;
   $("empty").hidden = !!state.root;
   $("draft-state").textContent = sourceDirty
     ? "Unapplied changes"
@@ -286,7 +288,7 @@ async function operation(path, data, options = {}) {
     status(
       options.imported
         ? (state.schema ? `File opened. Attached ${state.schema.filename}; press Validate to check it.` : "File opened. Click a field or card to inspect it.")
-        : "Changes applied. Download to save a copy.",
+        : "Changes applied. Use Save to write changes to disk.",
     );
   } catch (e) {
     status(e.name === "AbortError" ? "Operation cancelled." : e.message, true);
@@ -468,7 +470,7 @@ const diffPanel = mountDiffPanel(document, {
     try {
       const next = await api("/api/diff-revert", { ...payload, revision });
       await install(next,{committed:true});
-      status("Change reverted. Undo restores it; download to save a copy.");
+      status("Change reverted. Undo restores it; use Save to write changes to disk.");
       return true;
     } finally {
       setBusy(false);
@@ -638,17 +640,28 @@ $("undo").addEventListener("click", () =>
 $("redo").addEventListener("click", () =>
   operation("/api/history", { direction: "redo" }),
 );
-$("download").addEventListener("click", () => {
+async function saveDocument(as = false) {
   if (!ready() || !canLeaveInspector()) return;
-  if (!state.root) {
-    status("Open a file first.", true);
-    return;
+  if (!state.root) { status("Open a file first.", true); return; }
+  as = as || !state.canSaveLocal;
+  let path;
+  if (as) {
+    const choice = await fileBrowser.pick('save');
+    if (!choice || !ready()) return;
+    path = choice.path;
   }
-  const a = document.createElement("a");
-  a.href = "/api/download";
-  a.download = `document.${state.format}`;
-  a.click();
-});
+  setBusy(true);
+  try {
+    const next = await api(as ? '/api/save-as' : '/api/save', path ? { path } : {});
+    state = next;
+    updateControls();
+    status(`Saved ${next.savedPath}.`);
+  } catch (error) {
+    status(error.name === 'AbortError' ? 'Save cancelled; check the destination before retrying.' : error.message, true);
+  } finally { setBusy(false); }
+}
+$("save").addEventListener("click", () => void saveDocument());
+$("save-as").addEventListener("click", () => void saveDocument(true));
 const conversionDialog = mountConversionDialog(document, {
   revision: () => state.revision,
   preview: format => withProgress(()=>api('/api/preview', { format })),
@@ -759,7 +772,7 @@ async function submitInspector(form,config) {
     setBusy(true);status('Validating Inspector edit… Cancel is available.');
     const next=await api('/api/edit',action);
     await install(next,{committed:true});
-    status('Tree edit applied. Download to save a copy.');
+    status('Tree edit applied. Use Save to write changes to disk.');
   }catch(error){
     inspectorDirty=true;
     inspectorError(form,error.name==='AbortError'?'Inspector edit cancelled. Unapplied edit retained.':error.message);

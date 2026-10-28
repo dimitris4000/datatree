@@ -119,7 +119,7 @@ func (s *Server) largeFileRead(w http.ResponseWriter, r *http.Request, session *
 // snapshot is called while holding the session lock. Documents and attachments
 // are immutable; history slices are copied by Session.Clone.
 func (s *browserSession) snapshot() *browserSession {
-	return &browserSession{data: s.data.Clone(), filename: s.filename, path: s.path, comparison: s.comparison, comparisonFilename: s.comparisonFilename, schema: s.schema, schemaGeneration: s.schemaGeneration, originalDocument: s.originalDocument, originalMetadata: s.originalMetadata, comparisonMetadata: s.comparisonMetadata, git: s.git, gitPath: s.gitPath, gitLoaded: s.gitLoaded}
+	return &browserSession{data: s.data.Clone(), filename: s.filename, path: s.path, savedHash: s.savedHash, comparison: s.comparison, comparisonFilename: s.comparisonFilename, schema: s.schema, schemaGeneration: s.schemaGeneration, originalDocument: s.originalDocument, originalMetadata: s.originalMetadata, comparisonMetadata: s.comparisonMetadata, git: s.git, gitPath: s.gitPath, gitLoaded: s.gitLoaded}
 }
 
 func boundedText(text string, limit int) string {

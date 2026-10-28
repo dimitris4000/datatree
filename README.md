@@ -67,6 +67,21 @@ The toolbar has one **Open file** button. Its dialog offers the server’s file 
 
 A scalar field's subtree is its value; its key belongs to the parent object. The Inspector provides copyable JSONPath locations, which can also be pasted into the Find panel’s Path / query mode. Keys use escaped bracket notation. YAML document streams and structures without a JSON-compatible path show line/column locations instead.
 
+### Source diff
+
+Select **Diff** beside **Working** and **Original** for a read-only unified diff
+against the file as opened or imported. Green `+` lines are additions, red `-`
+lines are removals, and hunk headers identify the original and working line
+ranges. The comparison includes unapplied Working drafts; switching tabs preserves
+the draft and its editor history. Return to Working to apply or discard it.
+Tree/source selection synchronization is paused in Diff.
+
+The baseline remains the original import through edits, conversion, and Undo/Redo;
+opening or importing another document starts a new baseline. Comparison uses the
+editor's normalized line endings and marks missing final newlines. Large changed
+regions may appear as a broad replacement to bound comparison work. The editor
+renders diff lines on demand.
+
 ### Search and path queries
 
 The search panel starts hidden. Select **Search** beside **Changes** and

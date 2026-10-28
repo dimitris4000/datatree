@@ -1,0 +1,32 @@
+import { test, expect } from '@playwright/test';
+
+test('Source Diff includes drafts, preserves Working text, and follows Apply and Undo', async ({page}) => {
+  await page.goto('/');
+  await expect(page.locator('#revision')).toContainText('Revision 1');
+  await page.locator('#source-diff-tab').click();
+  await expect(page.locator('#source .cm-content')).toContainText('No changes since this file was opened.');
+  await expect(page.locator('#apply')).toBeDisabled();
+  await expect(page.locator('#discard')).toBeDisabled();
+  await page.locator('#working-tab').click();
+  const editor=page.locator('#source .cm-content');
+  await editor.click();
+  await page.keyboard.press('ControlOrMeta+Home');
+  await page.keyboard.insertText(' ');
+  await page.locator('#source-diff-tab').click();
+  await expect(editor).toContainText('--- Original');
+  await expect(editor).toContainText('+++ Working');
+  await expect(page.locator('#source .source-diff-added').first()).toBeVisible();
+  await expect(page.locator('#draft-state')).toHaveText('Unapplied changes');
+  await page.locator('#original-tab').click();
+  await expect(editor).not.toContainText('--- Original');
+  await page.locator('#working-tab').click();
+  await expect(page.locator('#draft-state')).toHaveText('Unapplied changes');
+  await page.locator('#apply').click();
+  await expect(page.locator('#revision')).toContainText('Revision 2');
+  await page.locator('#source-diff-tab').click();
+  await expect(editor).toContainText('--- Original');
+  await page.locator('#undo').click();
+  await expect(page.locator('#revision')).toContainText('Revision 3');
+  await page.locator('#source-diff-tab').click();
+  await expect(editor).toContainText('No changes since this file was opened.');
+});

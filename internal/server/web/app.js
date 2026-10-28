@@ -1,3 +1,4 @@
+import { unifiedDiff } from "./source-diff.js";
 import { requestJSON } from "./request.js";
 import { mountDiffPanel } from "./diff.js";
 import { mountFileBrowser } from "./file-browser.js";
@@ -18,6 +19,7 @@ let state = { revision: 0 },
   sourceDirty = false,
   inspectorDirty = false,
   showOriginal = false,
+  showDiff = false,
   busy = false,
   selection = null;
 let nodeIndices = new Map(),
@@ -76,6 +78,8 @@ function setBusy(value) {
     $("undo").disabled = !state.canUndo;
     $("redo").disabled = !state.canRedo;
     $("apply").disabled = showOriginal;
+    $("discard").disabled = showOriginal;
+    $("source-diff-tab").disabled = !state.root;
     $("original-tab").disabled = !state.root;
   }
 }
@@ -139,11 +143,15 @@ function updateControls() {
     ? "Unapplied changes"
     : "No changes";
   $("apply").disabled = busy || showOriginal;
+  $("discard").disabled = busy || showOriginal;
+  $("source-diff-tab").disabled = busy || !state.root;
   $("original-tab").disabled = busy || !state.root;
   $("working-tab").classList.toggle("active", !showOriginal);
-  $("original-tab").classList.toggle("active", showOriginal);
+  $("original-tab").classList.toggle("active", showOriginal && !showDiff);
   $("working-tab").setAttribute("aria-pressed", String(!showOriginal));
-  $("original-tab").setAttribute("aria-pressed", String(showOriginal));
+  $("original-tab").setAttribute("aria-pressed", String(showOriginal && !showDiff));
+  $("source-diff-tab").classList.toggle("active", showDiff);
+  $("source-diff-tab").setAttribute("aria-pressed", String(showDiff));
   sourceEditor.readOnly = showOriginal || busy;
   sourceEditor.refresh();
 }
@@ -198,7 +206,7 @@ async function installStableDraft(next) {
   state=next;
   for(const location of sourceByID.values())location.revision=next.revision;
   validationPanel.controller.install(state.schema);
-  sourceDirty=false;inspectorDirty=false;showOriginal=false;
+  sourceDirty=false;inspectorDirty=false;showOriginal=false;showDiff=false;
   sourceEditor.markClean();
   cleanDraft=sourceEditor.snapshot();workingDraft=cleanDraft;
   for(const record of refreshed)ingest(record);
@@ -240,7 +248,7 @@ async function install(next, { fit = false, imported = false, appliedDraft = fal
     validationPanel.controller.install(state.schema);
     sourceDirty = false;
     inspectorDirty = false;
-    showOriginal=false;
+    showOriginal=false;showDiff=false;
     if(imported)original=null;
     if(appliedDraft){sourceEditor.markClean();sourceEditor.setFormat(state.format);}
     else sourceEditor.setText(sourceText||'',state.format);
@@ -398,7 +406,7 @@ const tree = new TreeCanvas($("canvas"), {
   context: openNodeMenu,
 });
 function sourceSynchronized() {
-  return !!state.root && (showOriginal ? state.originalMatches === true : !sourceDirty);
+  return !showDiff && !!state.root && (showOriginal ? state.originalMatches === true : !sourceDirty);
 }
 async function nodeLocation(id) {
   if(sourceByID.has(id))return sourceByID.get(id);
@@ -568,8 +576,9 @@ $("discard").addEventListener("click", () => {
   updateControls();
   status("Source draft discarded.");
 });
-async function sourceTab(isOriginal) {
-  if(busy||showOriginal===isOriginal)return;
+async function sourceTab(mode) {
+  const isOriginal=mode!=="working", isDiff=mode==="diff";
+  if(busy||(showOriginal===isOriginal&&showDiff===isDiff))return;
   sourceSync++;
   if(!showOriginal)workingDraft=sourceEditor.snapshot();
   if(isOriginal){
@@ -580,14 +589,16 @@ async function sourceTab(isOriginal) {
         if(!response.ok)throw new Error(`Original source request failed (${response.status})`);
         original=await response.text();
       }
-      sourceEditor.setText(original,state.format);showOriginal=true;
+      sourceEditor.setText(isDiff ? unifiedDiff(original.replace(/\r\n?/g,"\n"),workingDraft.state.doc.toString()) : original,isDiff ? "diff" : state.format);showOriginal=true;showDiff=isDiff;
+      status(isDiff ? "Original → Working diff, including unapplied source changes." : "Original source.");
     }catch(error){status(error.message,true);}
     finally{setBusy(false);}
-  }else{sourceEditor.restore(workingDraft);showOriginal=false;}
+  }else{sourceEditor.restore(workingDraft);showOriginal=false;showDiff=false;}
   updateControls();
 }
-$("working-tab").addEventListener("click", () => void sourceTab(false));
-$("original-tab").addEventListener("click", () => void sourceTab(true));
+$("working-tab").addEventListener("click", () => void sourceTab("working"));
+$("original-tab").addEventListener("click", () => void sourceTab("original"));
+$("source-diff-tab").addEventListener("click", () => void sourceTab("diff"));
 $("cancel-operation").addEventListener("click",()=>{operationAbort?.abort();$("cancel-operation").disabled=true;status("Cancelling operation…");});
 const fileBrowser = mountFileBrowser(document, {
   revision: () => state.revision,

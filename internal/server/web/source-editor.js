@@ -1,9 +1,25 @@
 import { EditorState, ChangeSet, Compartment } from '@codemirror/state';
-import { EditorView, lineNumbers, highlightActiveLineGutter, drawSelection, keymap, placeholder } from '@codemirror/view';
+import { EditorView, ViewPlugin, Decoration, lineNumbers, highlightActiveLineGutter, drawSelection, keymap, placeholder } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { foldGutter, foldKeymap, syntaxHighlighting, defaultHighlightStyle, foldAll, unfoldAll } from '@codemirror/language';
 import { json } from '@codemirror/lang-json';
 import { yaml } from '@codemirror/lang-yaml';
+const diffLines = ViewPlugin.fromClass(class {
+ constructor(view) { this.decorations=this.build(view); }
+ update(update) { if(update.docChanged||update.viewportChanged)this.decorations=this.build(update.view); }
+ build(view) {
+  const marks=[];
+  for(const {from,to} of view.visibleRanges){
+   for(let pos=from;pos<=to;){
+    const line=view.state.doc.lineAt(pos),first=line.text[0];
+    const kind=first==='+'?'added':first==='-'?'removed':first==='@'?'hunk':null;
+    if(kind)marks.push(Decoration.line({class:`source-diff-${kind}`}).range(line.from));
+    pos=line.to+1;
+   }
+  }
+  return Decoration.set(marks,true);
+ }
+},{decorations:plugin=>plugin.decorations});
 export const normalizedSource = text => text.replace(/\r\n?/g, '\n');
 export function lineStarts(text) {
   const starts = [0];
@@ -90,7 +106,7 @@ export class SourceEditor {
  }
  setFormat(format) {
   this.format=format;
-  this.view.dispatch({effects:this.languageConfig.reconfigure(format==='json'?json():format==='yaml'?yaml():[])});
+  this.view.dispatch({effects:this.languageConfig.reconfigure(format==='json'?json():format==='yaml'?yaml():format==='diff'?diffLines:[])});
  }
  markClean() { this.changes=ChangeSet.empty(this.view.state.doc.length); }
  snapshot() { return {state:this.view.state,changes:this.changes,format:this.format}; }

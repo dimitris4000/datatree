@@ -42,7 +42,8 @@
           <div class="tabs" role="group" aria-label="Source version">
             <button id="working-tab" class="active" aria-pressed="true">
               Working</button
-            ><button id="original-tab" aria-pressed="false">Original</button>
+            ><button id="original-tab" aria-pressed="false">Original</button
+            ><button id="source-diff-tab" aria-pressed="false" disabled>Diff</button>
           </div>
         </div>
         <div class="source-tools">
@@ -71,11 +72,13 @@
         tabindex="0"
       ></div>
       <section id="tree-pane" class="pane">
-        <div class="pane-heading">
+        <div class="pane-heading tree-heading">
           <h1>Tree view</h1>
+          <div class="tree-panel-toggles" role="group" aria-label="Tree panels">
           <button id="find-toggle" type="button" aria-expanded="false" aria-controls="find-panel">Search</button>
           <button id="diff-toggle" type="button" aria-expanded="false" aria-controls="diff-panel">Changes</button>
           <button id="validation-toggle" type="button" aria-expanded="false" aria-controls="validation-panel">Validation</button>
+          </div>
         </div>
         <section id="find-panel" class="find-panel" aria-label="Find nodes" hidden>
           <form id="find-form" class="find-form">

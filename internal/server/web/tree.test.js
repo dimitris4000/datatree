@@ -21,6 +21,39 @@ const obj = (id, label, children) => ({
   children,
 });
 
+test("pagination labels stay inside their card without overlapping at any page", () => {
+  for (const [total, offset, size] of [[3703, 0, 20], [3703, 2740, 20], [3703, 3700, 3], [Number.MAX_SAFE_INTEGER, 9007199254740960, 20]]) {
+    const root = { id: "1", label: "resources", kind: "array", total, offset,
+      children: Array.from({ length: size }, (_, i) => obj(String(i + 2), `[${i}]`, [])) };
+    const graph = layout(root, new Map([[root.id, root]]), new Set([root.id]));
+    const card = graph.cards[0], labels = [];
+    // Record Canvas text bounds using a conservative monospace advance.
+    const ctx = new Proxy({ font: "", textAlign: "left",
+      measureText(text) { return { width: String(text).length * parseFloat(this.font) * 0.62 }; },
+      fillText(text, x, y) {
+        if (y <= card.y + 35 || y > card.y + card.h) return;
+        const width = this.measureText(text).width;
+        const left = x - (this.textAlign === "right" ? width : this.textAlign === "center" ? width / 2 : 0);
+        labels.push({ text, left, right: left + width, top: y - parseFloat(this.font), bottom: y });
+      },
+    }, { get(target, key) { return key in target ? target[key] : () => {}; } });
+    const tree = Object.create(TreeCanvas.prototype);
+    Object.assign(tree, { canvas: { width: 800, getContext: () => ctx }, width: 800, height: 800,
+      graph: { cards: [card], edges: [] }, view: { x: 0, y: 0, scale: 1 }, callbacks: {} });
+    tree.draw();
+    assert.equal(labels.map(l => l.text).join(" ").includes(`${offset + 1}–${offset + size} / ${total}`), true);
+    for (const a of labels) {
+      assert.ok(a.left >= card.x && a.right <= card.x + card.w, `clipped pagination: ${a.text}`);
+      for (const b of labels.filter(b => b !== a))
+        assert.ok(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top,
+          `overlapping pagination: ${a.text} and ${b.text}`);
+    }
+    for (const [x, expected] of [[card.x + 18, Math.max(0, offset - 20)],
+      [card.x + card.w - 18, offset + size < total ? offset + 20 : offset]])
+      assert.deepEqual(hitTest(graph, x, card.y + card.h - 10), { type: "page", id: "1", offset: expected });
+  }
+});
+
 test('focusing an attribute centers its row in a tall card without changing zoom',()=>{
  const rows=Array.from({length:20},(_,i)=>scalar(String(i),'field'+i,'value'));
  const card={id:'object',x:100,y:80,w:250,h:500,rows};

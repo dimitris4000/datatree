@@ -1,6 +1,7 @@
 const collection = (n) => ["object", "array", "stream"].includes(n.kind);
 const short = (s, n = 44) =>
   String(s).length > n ? String(s).slice(0, n - 1) + "…" : String(s);
+const pageRange = (n) => `${(n.offset || 0) + 1}–${Math.min((n.offset || 0) + (n.children?.length || 0), n.total)} / ${n.total}`;
 export function diffBadge(mark) {
   if (mark?.added) return { label: "+ Added", background: "#e1f2e4", color: "#28603a" };
   if (mark?.changed) return { label: "~ Changed", background: "#fff0d2", color: "#875417" };
@@ -69,14 +70,16 @@ export function layout(root, records, expanded, priority = new Set()) {
       ? children.filter((c) => n.kind !== "object" || collection(c))
       : [];
     const texts = [n.label, ...rows.map((c) => c.label + ": " + c.value)];
+    const paginated = open && n.total > children.length;
     const w = Math.min(
       360,
-      Math.max(180, ...texts.map((t) => short(t).length * 6.8 + 38)),
+      Math.max(180, paginated ? pageRange(n).length * 6.8 + 24 : 0,
+        ...texts.map((t) => short(t).length * 6.8 + 38)),
     );
     const h =
       (collection(n) ? 40 : 66) +
       rows.length * 23 +
-      (open && n.total > (n.children?.length || 0) ? 27 : 0);
+      (paginated ? 47 : 0);
     const card = { ...n, depth, w, h, rows, open, branches: [], x: 0, y: 0 };
     cards.push(card);
     widths[depth] = Math.max(widths[depth] || 0, w);
@@ -497,14 +500,15 @@ export class TreeCanvas {
       }
       if (c.open && c.total > (c.children?.length || 0)) {
         ctx.fillStyle = "#f6f8f2";
-        ctx.fillRect(c.x, c.y + c.h - 27, c.w, 27);
+        ctx.fillRect(c.x, c.y + c.h - 47, c.w, 47);
         ctx.fillStyle = "#73876b";
         ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, monospace";
+        const label = pageRange(c);
+        ctx.fillText(label, c.x + (c.w - ctx.measureText(label).width) / 2, c.y + c.h - 30);
         ctx.fillText("‹ Previous", c.x + 12, c.y + c.h - 10);
-        const label = `${(c.offset || 0) + 1}–${Math.min((c.offset || 0) + (c.children?.length || 0), c.total)} / ${c.total}  Next ›`;
         ctx.fillText(
-          label,
-          c.x + c.w - ctx.measureText(label).width - 10,
+          "Next ›",
+          c.x + c.w - ctx.measureText("Next ›").width - 12,
           c.y + c.h - 10,
         );
       }

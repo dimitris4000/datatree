@@ -2,6 +2,20 @@
 
 A local Go web application for exploring and editing JSON, JSONL, YAML and CSV as a left-to-right tree. Each depth shares a column. Object cards group scalar fields, while nested collections branch into separate cards.
 
+## Screenshots
+
+Explore the bundled [projects sample](samples/projects.json) with synchronized source selection, an expandable tree and a subtree inspector.
+
+![Data Tree showing project data in the source editor, expanded tree and selected subtree inspector](docs/screenshots/tree-inspector.png)
+
+Validate against the companion JSON Schema and navigate to errors. Here, changing a project's status to `paused` shows the allowed values.
+
+![Schema validation highlighting an invalid project status and listing planned, active and completed as allowed values](docs/screenshots/schema-validation.png)
+
+Review edits with the source diff and structural Changes panel, including before/after values and a Revert action.
+
+![Source and structural diffs comparing the original active status with the edited paused status](docs/screenshots/source-structural-diff.png)
+
 ## Run
 
 Requires Go 1.23 or newer. Go dependencies and browser assets are checked in; Node.js is only needed for frontend development.

@@ -5,8 +5,8 @@ github.com/santhosh-tekuri/jsonschema/v6/kind
 # go.yaml.in/yaml/v3 v3.0.4
 ## explicit; go 1.16
 go.yaml.in/yaml/v3
-# golang.org/x/text v0.14.0
-## explicit; go 1.18
+# golang.org/x/text v0.43.0
+## explicit; go 1.26.0
 golang.org/x/text/feature/plural
 golang.org/x/text/internal
 golang.org/x/text/internal/catmsg

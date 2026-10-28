@@ -26,7 +26,7 @@ From a cloned checkout:
 go run ./cmd/datatree
 ```
 
-Open **http://127.0.0.1:8080**. Use **Load example**, **Open file**, or paste source text and choose **Apply source**. An alternative port is available with `-listen 127.0.0.1:8090`. Listening on non-loopback addresses is rejected.
+Open the URL printed in the terminal. Without `-listen`, startup tries up to five distinct random ports from **1000–9999** on **127.0.0.1**, stopping at the first successful bind. If all five attempts fail, startup exits with an error. Use `-listen 127.0.0.1:8090` for a fixed address with a single bind attempt. Listening on non-loopback addresses is rejected. Use **Load example**, **Open file**, or paste source text and choose **Apply source**.
 
 Pass an optional file argument to load it at startup:
 

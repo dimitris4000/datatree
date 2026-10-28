@@ -16,7 +16,7 @@ Data Tree is a local Go web app for exploring and editing JSON, JSONL, YAML, and
 
 Use Go 1.23+ and a Node version supported by `package.json`.
 
-- `go run ./cmd/datatree`: serve locally at `http://127.0.0.1:8080`.
+- `go run ./cmd/datatree`: serve on a random four-digit loopback port (up to five attempts); open the printed URL.
 - `go run ./cmd/datatree -listen 127.0.0.1:8090 samples/projects.json`: open a sample on another port.
 - `go build ./cmd/datatree`: compile the executable.
 - `npm ci`: install locked frontend dependencies.

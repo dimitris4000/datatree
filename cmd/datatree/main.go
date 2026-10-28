@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -25,7 +26,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	listener, err := net.Listen("tcp", address)
+	listener, err := listen(address, net.Listen)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -44,9 +45,30 @@ func main() {
 	}
 }
 
+func listen(address string, bind func(string, string) (net.Listener, error)) (net.Listener, error) {
+	if address != "" {
+		return bind("tcp", address)
+	}
+	used := make(map[int]bool)
+	var err error
+	for len(used) < 5 {
+		port := 1000 + rand.IntN(9000)
+		if used[port] {
+			continue
+		}
+		used[port] = true
+		var listener net.Listener
+		listener, err = bind("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err == nil {
+			return listener, nil
+		}
+	}
+	return nil, fmt.Errorf("could not listen on a random four-digit loopback port after 5 attempts: %w", err)
+}
+
 func application(args []string) (*server.Server, string, error) {
 	flags := flag.NewFlagSet("datatree", flag.ContinueOnError)
-	address := flags.String("listen", "127.0.0.1:8080", "loopback listen address")
+	address := flags.String("listen", "", "loopback listen address (default: up to 5 random ports from 1000 to 9999)")
 	maxFileMiB := flags.Int64("max-file-size-mb", int64(document.MaxBytes/(1024*1024)), "maximum document/comparison size in MiB")
 	maxNodes := flags.Int("max-nodes", document.MaxNodes, "maximum parsed nodes per document, including mapping keys")
 	flags.Usage = func() {
@@ -66,13 +88,21 @@ func application(args []string) (*server.Server, string, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, "", err
 	}
-	host, _, err := net.SplitHostPort(*address)
-	if err != nil {
-		return nil, "", fmt.Errorf("invalid -listen address: %w", err)
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return nil, "", errors.New("-listen must use a loopback IP address")
+	var explicitListen bool
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "listen" {
+			explicitListen = true
+		}
+	})
+	if explicitListen {
+		host, _, err := net.SplitHostPort(*address)
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid -listen address: %w", err)
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return nil, "", errors.New("-listen must use a loopback IP address")
+		}
 	}
 	if flags.NArg() == 1 {
 		handler, err := server.NewWithFile(flags.Arg(0), limits)
